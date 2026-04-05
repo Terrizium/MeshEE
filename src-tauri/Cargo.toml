@@ -28,3 +28,7 @@ async-trait = "0.1"
 futures = "0.3"
 uuid = { version="1.23.0", features = [ "v4" ] }
 chrono = "0.4.44"
+thiserror = "2.0.18"
+machine-uid = "0.4.0" 
+blake3 = "1.8.4"
+whoami = "2.1.1"
