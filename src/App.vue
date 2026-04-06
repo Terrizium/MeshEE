@@ -1,9 +1,47 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onUnmounted, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 const greetMsg = ref("");
 const name = ref("");
+
+interface Message {
+  id: number;
+  msg: string;
+}
+
+const messages = ref<Message[]>([]);
+
+const isReceiving = ref(false);
+let unlisten: UnlistenFn | null = null;
+
+async function startReceiving() {
+  if (isReceiving.value) return;
+
+  try {
+    // 1. Запускаем периодическую генерацию сообщений в Rust
+    await invoke("start_periodic_messages");
+
+    // 2. Подписываемся на события new-message
+    unlisten = await listen<Message>("new-message", (event) => {
+      console.log("Новое сообщение от Rust:", event.payload);
+      messages.value.push(event.payload);
+    });
+
+    isReceiving.value = true;
+  } catch (error) {
+    console.error("Ошибка запуска получения сообщений:", error);
+  }
+}
+
+// При размонтировании компонента отписываемся от событий
+onUnmounted(() => {
+  if (unlisten) {
+    unlisten();
+    unlisten = null;
+  }
+});
 
 async function greet() {
   // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -33,6 +71,20 @@ async function greet() {
       <button type="submit">Greet</button>
     </form>
     <p>{{ greetMsg }}</p>
+    <div>
+      <button @click="startReceiving" :disabled="isReceiving">
+        {{ isReceiving ? "Получение..." : "Начать получение сообщений" }}
+      </button>
+      <div v-if="messages.length">
+        <h3>Сообщения:</h3>
+        <ul>
+          <li v-for="msg in messages" :key="msg.id">
+            {{ msg.msg }}
+          </li>
+        </ul>
+      </div>
+      <p v-else>Нет сообщений</p>
+    </div>
   </main>
 </template>
 
@@ -44,7 +96,6 @@ async function greet() {
 .logo.vue:hover {
   filter: drop-shadow(0 0 2em #249b73);
 }
-
 </style>
 <style>
 :root {
@@ -156,5 +207,5 @@ button {
     background-color: #0f0f0f69;
   }
 }
-
 </style>
+

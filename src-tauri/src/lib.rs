@@ -1,4 +1,7 @@
+use serde_json::json;
 use std::sync::Mutex;
+use tauri::Emitter;
+use tokio::time::{interval, Duration};
 
 use crate::auth::Profile;
 
@@ -21,6 +24,26 @@ impl Default for AppState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[tauri::command]
+async fn start_periodic_messages(app_handle: tauri::AppHandle) {
+    tokio::spawn(async move {
+        let mut interval = interval(Duration::from_secs(3));
+        let mut counter = 0;
+        loop {
+            interval.tick().await;
+            counter += 1;
+            let message = format!("Автоматическое сообщение #{}", counter);
+            let _ = app_handle.emit(
+                "new-message",
+                &json!({
+                    "id": counter,
+                    "msg": message
+                }),
+            );
+        }
+    });
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -47,7 +70,11 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, login])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            login,
+            start_periodic_messages
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
