@@ -1,9 +1,11 @@
 use serde_json::json;
 use std::sync::Mutex;
 use tauri::Emitter;
+use tauri::{path::BaseDirectory, Manager};
 use tokio::time::{interval, Duration};
 
 use crate::auth::Profile;
+use crate::auth::ProfileData;
 
 mod auth;
 mod p2p;
@@ -62,6 +64,30 @@ fn login(name: &str, password: &str, state: tauri::State<'_, AppState>) -> Resul
             Ok(true)
         }
         Err(err) => Err(format!("Ошибка входа: {}", err.to_string())),
+    }
+}
+
+#[tauri::command]
+async fn load(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<ProfileData, String> {
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    let username = state
+        .cur_profile
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .username
+        .clone();
+    match auth::load(&username, &data_dir).await {
+        Ok(data) => Ok(data),
+        Err(err) => Err(format!("Failed to load data: {}", err)),
     }
 }
 
