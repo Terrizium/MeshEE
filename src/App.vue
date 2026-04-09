@@ -5,7 +5,13 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Message } from "./types";
 import BaseButton from "./domains/main/components/BaseButton.vue";
 import BaseInput from "./domains/main/components/BaseInput.vue";
-import EyeOutline from "./domains/main/icons/EyeOutline.vue";
+import { useTauriWindow } from "./composables/useTauriWindow";
+
+const {
+  closeWindow,
+  toggleMaximizeWindow,
+  minimizeWindow
+} = useTauriWindow();
 
 const greetMsg = ref("");
 const name = ref("");
@@ -49,28 +55,18 @@ async function greet() {
 </script>
 
 <template>
-  <main class="container">
-    <h1>Welcome to Tauri + Vue</h1>
-
-    <div class="row">
-      <a href="https://vite.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
+  <div class="container">
+    <div data-tauri-drag-region class="titlebar">
+      <div class="titlebar-text">MeshEE</div>
+      <div class="titlebar-buttons">
+        <button class="control-btn" @click="minimizeWindow">_</button>
+        <button class="control-btn" @click="toggleMaximizeWindow">□</button>
+        <button class="control-btn" @click="closeWindow">×</button>
+      </div>
     </div>
-    <p>Click on the Tauri, Vite, and Vue logos to learn more.</p>
-
+    <main class="container pa-2">
     <form class="row" @submit.prevent="greet">
-      <BaseInput id="greet-input" v-model="name" placeholder="Enter a name...">
-        <template #append>
-          <EyeOutline style="cursor: pointer" />
-        </template>
-      </BaseInput>
+      <BaseInput id="greet-input" v-model="name" placeholder="Enter a name..."/>
       <BaseButton type="submit">Greet</BaseButton>
     </form>
     <p>{{ greetMsg }}</p>
@@ -89,12 +85,13 @@ async function greet() {
       <p v-else>Нет сообщений</p>
     </div>
   </main>
+  </div>
+
 </template>
 
-<style scoped>
-.row {
-  display: flex;
-  gap: 8px
-}
+<style>
+
+
+
 </style>
 
