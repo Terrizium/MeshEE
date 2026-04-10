@@ -5,18 +5,23 @@
     :type="type"
     @click="handleClick"
   >
-    <slot />
+    <BaseSpinner v-if="props.loading" inline size="12"/>
+    <slot v-else />
   </button>
 </template>
 
 <script setup lang="ts">
+import BaseSpinner from './BaseSpinner.vue';
+
 interface Props {
   disabled?: boolean;
+  loading?: boolean;
   type?: 'button' | 'submit' | 'reset';
 }
 
 const props = withDefaults(defineProps<Props>(), {
   disabled: false,
+  loading: false,
   type: 'button',
 });
 
@@ -36,7 +41,7 @@ const handleClick = (event: MouseEvent) => {
   font-family: inherit;
   font-weight: 600;
   font-size: 1rem;
-  padding: 0.75rem 1.5rem;
+  padding: 0.5rem 1.5rem;
   border: 1px solid rgba(255, 255, 255, 0.25); 
   border-radius: 2rem;
   cursor: pointer;

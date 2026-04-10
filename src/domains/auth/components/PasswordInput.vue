@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import BaseInput from "../../main/components/BaseInput.vue";
-import EyeOutline from "~/domains/main/icons/EyeOutline.vue";
 import EyeClosed from "../../main/icons/EyeClosed.vue";
+import EyeOutline from "../../main/icons/EyeOutline.vue";
 import { Ref, ref } from "vue";
 const { 
         modelValue,

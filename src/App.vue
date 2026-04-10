@@ -3,12 +3,22 @@ import { onUnmounted, Ref, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Message } from "./types";
-import BaseButton from "./domains/main/components/BaseButton.vue";
-import BaseInput from "./domains/main/components/BaseInput.vue";
-import EyeOutline from "./domains/main/icons/EyeOutline.vue";
+import { useAuth } from "./composables/useAuth";
+import LoginForm from "./domains/auth/components/LoginForm.vue";
+import BaseTauriAppBar from "./domains/main/components/BaseTauriAppBar.vue";
+
+const { user } = useAuth();
 
 const greetMsg = ref("");
 const name = ref("");
+
+
+
+
+
+
+
+
 
 const messages: Ref<Message[]> = ref([]);
 
@@ -49,52 +59,17 @@ async function greet() {
 </script>
 
 <template>
-  <main class="container">
-    <h1>Welcome to Tauri + Vue</h1>
-
-    <div class="row">
-      <a href="https://vite.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
-    </div>
-    <p>Click on the Tauri, Vite, and Vue logos to learn more.</p>
-
-    <form class="row" @submit.prevent="greet">
-      <BaseInput id="greet-input" v-model="name" placeholder="Enter a name...">
-        <template #append>
-          <EyeOutline style="cursor: pointer" />
-        </template>
-      </BaseInput>
-      <BaseButton type="submit">Greet</BaseButton>
-    </form>
-    <p>{{ greetMsg }}</p>
-    <div>
-      <BaseButton @click="startReceiving" :disabled="isReceiving">
-        {{ isReceiving ? "Получение..." : "Начать получение сообщений" }}
-      </BaseButton>
-      <div v-if="messages.length">
-        <h3>Сообщения:</h3>
-        <ul>
-          <li v-for="msg in messages" :key="msg.id">
-            {{ msg.msg }}
-          </li>
-        </ul>
-      </div>
-      <p v-else>Нет сообщений</p>
-    </div>
-  </main>
+  <div class="container">
+    <BaseTauriAppBar />
+    <main class="container pa-2">
+      <LoginForm v-if="!user" />
+    </main>
+  </div>
 </template>
 
-<style scoped>
-.row {
-  display: flex;
-  gap: 8px
-}
+<style>
+
+
+
 </style>
 
