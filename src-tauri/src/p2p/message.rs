@@ -1,38 +1,95 @@
 #![allow(unused)]
 
+use async_trait::async_trait;
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use libp2p::{
+    multihash::derive,
+    request_response::{self, ProtocolName},
+};
 use serde::{Deserialize, Serialize};
+use std::io; // 👈 futures::io
+
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct MsgRequest {
-    pub uuid: String,
-    pub message: String,
-    pub created_at: String,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChatMessage {
+    pub sender: String,
+    pub content: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct MsgResponse {
-    pub content: Vec<u8>,
-}
+#[derive(Clone, Debug)]
+pub struct ChatProtocol;
 
-impl MsgRequest {
-    pub fn new(message: String) -> Self {
-        Self {
-            uuid: Uuid::new_v4().to_string(),
-            message: message.trim().to_string(),
-            created_at: chrono::Local::now().to_rfc3339(),
-        }
+impl ProtocolName for ChatProtocol {
+    fn protocol_name(&self) -> &[u8] {
+        b"/meshee-chat/1.0"
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn test_msg_request_new() {
-        let mr = MsgRequest::new("test".to_string());
-        assert_eq!(mr.message, "test".to_string());
-        assert!(!mr.uuid.is_empty());
-        assert!(!mr.created_at.is_empty());
+#[derive(Clone)]
+pub struct JsonCodec;
+
+#[async_trait]
+impl request_response::Codec for JsonCodec {
+    type Protocol = ChatProtocol;
+    type Request = ChatMessage;
+    type Response = ChatMessage;
+
+    async fn read_request<T>(&mut self, _: &Self::Protocol, io: &mut T) -> io::Result<Self::Request>
+    where
+        T: AsyncRead + Unpin + Send, // 👈 futures::io::AsyncRead + Send
+    {
+        let mut buf = Vec::new();
+        AsyncReadExt::read_to_end(io, &mut buf)
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        serde_json::from_slice(&buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+
+    async fn read_response<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+    ) -> io::Result<Self::Response>
+    where
+        T: AsyncRead + Unpin + Send,
+    {
+        let mut buf = Vec::new();
+        AsyncReadExt::read_to_end(io, &mut buf)
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        serde_json::from_slice(&buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+
+    async fn write_request<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+        req: Self::Request,
+    ) -> io::Result<()>
+    where
+        T: AsyncWrite + Unpin + Send,
+    {
+        let buf =
+            serde_json::to_vec(&req).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        AsyncWriteExt::write_all(io, &buf)
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    }
+
+    async fn write_response<T>(
+        &mut self,
+        _: &Self::Protocol,
+        io: &mut T,
+        res: Self::Response,
+    ) -> io::Result<()>
+    where
+        T: AsyncWrite + Unpin + Send,
+    {
+        let buf =
+            serde_json::to_vec(&res).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        AsyncWriteExt::write_all(io, &buf)
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 }
