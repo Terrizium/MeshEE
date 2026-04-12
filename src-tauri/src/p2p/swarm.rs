@@ -9,6 +9,7 @@ use libp2p::{
     tcp, yamux, PeerId, Swarm, Transport,
 };
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 use crate::p2p::{
     error::P2pError,
@@ -48,6 +49,51 @@ pub async fn create_swarm(keypair: Keypair) -> Result<Swarm<ChatBehaviour>, P2pE
     let swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build();
 
     Ok(swarm)
+}
+
+pub async fn create_swarm_with_rx(
+    keypair: Keypair,
+) -> Result<
+    (
+        Swarm<ChatBehaviour>,
+        mpsc::UnboundedSender<ChatMessage>,
+        mpsc::UnboundedReceiver<ChatMessage>,
+    ),
+    P2pError,
+> {
+    let swarm = create_swarm(keypair).await.unwrap();
+    let (tx, rx) = mpsc::unbounded_channel();
+    Ok((swarm, tx, rx))
+}
+
+pub async fn run_swarm_loop(
+    mut swarm: Swarm<ChatBehaviour>,
+    tx: mpsc::UnboundedSender<ChatMessage>,
+) {
+    loop {
+        match swarm.select_next_some().await {
+            SwarmEvent::Behaviour(ChatBehaviourEvent::Messages(
+                request_response::Event::Message {
+                    message:
+                        request_response::Message::Request {
+                            request, channel, ..
+                        },
+                    ..
+                },
+            )) => {
+                // Автоматический ACK (RequestResponse требует ответа)
+                let _ = swarm
+                    .behaviour_mut()
+                    .messages
+                    .send_response(channel, request.clone());
+                let _ = tx.send(request);
+            }
+            SwarmEvent::ConnectionClosed { .. } | SwarmEvent::IncomingConnectionError { .. } => {
+                break;
+            }
+            _ => {} // ping, identify
+        }
+    }
 }
 
 #[cfg(test)]
