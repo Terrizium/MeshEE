@@ -1,8 +1,9 @@
 #![allow(unused)]
 
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use chrono::Local;
+use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
@@ -45,19 +46,38 @@ pub async fn load(username: String, data_dir: &Path) -> Result<ProfileData, Auth
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ProfileData {
     pub username: String,
     pub peer_id: String,
+    #[serde(default)]
     pub chats: Vec<Chat>,
+    #[serde(default)]
+    known_peers: HashMap<String, Vec<String>>,
 }
 impl ProfileData {
-    fn default() -> Self {
+    pub fn default() -> Self {
         ProfileData {
             username: String::new(),
             peer_id: String::new(),
             chats: Vec::new(),
+            known_peers: HashMap::new(),
         }
+    }
+    pub fn add_known_peer(&mut self, peer_id: PeerId, addr: Multiaddr) {
+        let key = peer_id.to_string();
+        let addr_str = addr.to_string();
+        let list = self.known_peers.entry(key).or_default();
+        if !list.contains(&addr_str) {
+            list.push(addr_str);
+        }
+    }
+    pub fn get_known_peers(&self, peer_id: PeerId) -> Vec<Multiaddr> {
+        let key = peer_id.to_string();
+        self.known_peers
+            .get(&key)
+            .map(|addrs| addrs.iter().filter_map(|s| s.parse().ok()).collect())
+            .unwrap_or_default()
     }
 }
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -110,6 +130,8 @@ fn sanitize_username(username: String) -> String {
 #[cfg(test)]
 mod tests {
     use tempfile::tempdir;
+
+    use crate::auth::Profile;
 
     use super::*;
 
