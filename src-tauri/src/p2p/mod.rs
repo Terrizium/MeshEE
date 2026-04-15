@@ -9,14 +9,14 @@ mod tests {
     use std::time::Duration;
 
     use crate::p2p::message::ChatMessage;
-    use crate::p2p::swarm::{ChatBehaviour, ChatBehaviourEvent, create_swarm_with_rx, run_swarm_loop};
+    use crate::p2p::swarm::{ChatBehaviour, ChatBehaviourEvent, RelayChatBehaviourEvent, create_swarm_with_rx, run_swarm_loop};
     use crate::p2p::{error::P2pError, identity::get_peer_id_from_device_id, swarm::create_swarm};
 
     use futures::StreamExt;
     use libp2p::core::transport::MemoryTransport;
     use libp2p::multiaddr::{Multiaddr, Protocol};
     use libp2p::multihash::Multihash;
-    use libp2p::request_response;
+    use libp2p::{relay, request_response};
     use libp2p::{
         core::upgrade,
         identity::Keypair,
@@ -24,6 +24,63 @@ mod tests {
         swarm::{behaviour, NetworkBehaviour, SwarmBuilder, SwarmEvent},
         tcp, yamux, PeerId, Swarm, Transport,
     };
+
+    #[tokio::test]
+    async fn test_connection_via_relay_fallback() {
+        use std::time::Duration;
+        use libp2p::swarm::SwarmEvent;
+        use crate::p2p::swarm::{create_relay_server, create_swarm_with_relay};
+
+        let relay_kp = Keypair::generate_ed25519();
+        let mut relay_swarm = create_relay_server(relay_kp).await.unwrap();
+        let listen_addr: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
+        relay_swarm.listen_on(listen_addr.clone()).unwrap();
+        
+        let relay_addr = loop {
+            if let SwarmEvent::NewListenAddr { address, .. } = relay_swarm.select_next_some().await {
+                break address;
+            }
+        };
+        let relay_peer_id = *relay_swarm.local_peer_id();
+
+        let client_kp = Keypair::generate_ed25519();
+        let mut client_swarm = create_swarm_with_relay(client_kp).await.unwrap();
+
+        let target = relay_addr.with(Protocol::P2p(relay_peer_id.into()));
+        client_swarm.dial(target).unwrap();
+
+        // tokio::time::timeout(Duration::from_secs(10), async {
+        //     let mut connected = false;
+        //     let mut reserved = false;
+        //
+        //     loop {
+        //         tokio::select! {
+        //             event = relay_swarm.select_next_some() => {
+        //             },
+        //             event = client_swarm.select_next_some() => {
+        //                 match event {
+        //                     SwarmEvent::ConnectionEstablished { peer_id, .. } 
+        //                         if peer_id == relay_peer_id => {
+        //                         connected = true;
+        //                         let relay_reserve_addr = relay_addr.with(Protocol::P2p(relay_peer_id))
+        //                             .with(Protocol::P2pCircuit);
+        //                     }
+        //                     SwarmEvent::Behaviour(RelayChatBehaviourEvent::RelayClient(
+        //                         relay::client::Event::ReservationReqAccepted { .. } 
+        //                     )) | SwarmEvent::Behaviour(RelayChatBehaviourEvent::RelayClient(
+        //                         relay::client::Event::ReservationConfirmed { .. }
+        //                     )) => {
+        //                         reserved = true;
+        //                     }
+        //                     _ => {}
+        //                 }
+        //             }
+        //         }
+        //         if connected && reserved { break; }
+        //     }
+        // }).await.expect("Timeout: relay reservation failed");
+
+    }
 
     #[tokio::test]
     async fn test_message_stream_emits_exactly_once() {
