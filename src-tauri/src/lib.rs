@@ -1,25 +1,37 @@
 #![allow(unused)]
 
+mod auth;
+mod p2p;
+
+use libp2p::PeerId;
 use serde_json::json;
 use std::sync::Mutex;
 use tauri::Emitter;
 use tauri::Manager;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio::time::{interval, Duration};
 
 use crate::auth::Profile;
 use crate::auth::ProfileData;
+use crate::p2p::ChatMessage;
 
-mod auth;
-mod p2p;
+pub struct P2pHandle {
+    pub tx: mpsc::UnboundedSender<ChatMessage>,
+    pub task: JoinHandle<()>,
+    pub local_peer_id: PeerId,
+}
 
 pub struct AppState {
     pub cur_profile: Mutex<Option<Profile>>,
+    pub p2p_handle: Mutex<Option<P2pHandle>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
             cur_profile: Mutex::new(None),
+            p2p_handle: Mutex::new(None),
         }
     }
 }
@@ -28,6 +40,38 @@ impl Default for AppState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[tauri::command]
+async fn init_p2p<R: tauri::Runtime>(
+    device_id: String,
+    app_handle: tauri::AppHandle<R>,
+) -> Result<String, String> {
+    let keypair = p2p::identity::get_peer_id_from_device_id(&device_id)
+        .map_err(|e| format!("Invalid device_id: {}", e))?;
+    let peer_id = PeerId::from(keypair.public());
+    let (mut swarm, tx_loop, _rx) = p2p::swarm::create_swarm_with_rx(keypair)
+        .await
+        .map_err(|e| format!("Failed to create swarm: {}", e))?;
+    swarm
+        .listen_on(
+            "/ip4/0.0.0.0/tcp/0"
+                .parse::<libp2p::Multiaddr>()
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| format!("Failed to listen: {}", e))?;
+    let tx_send = tx_loop.clone();
+    let task = tokio::spawn(async move {
+        p2p::swarm::run_swarm_loop(swarm, tx_loop).await;
+    });
+    let state = app_handle.state::<AppState>();
+    let mut lock = state.p2p_handle.lock().unwrap();
+    *lock = Some(P2pHandle {
+        tx: tx_send,
+        task,
+        local_peer_id: peer_id,
+    });
+    Ok(peer_id.to_string())
 }
 
 #[tauri::command]
@@ -101,8 +145,35 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             login,
-            start_periodic_messages
+            start_periodic_messages,
+            init_p2p
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::test::{mock_app, mock_builder, mock_context, noop_assets};
+
+    #[tokio::test]
+    async fn init_p2p_returns_valid_peer_id_and_updates_state() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let device_id = "0000000000000000000000000000000000000000000000000000000000000001";
+        let result =
+            init_p2p::<tauri::test::MockRuntime>(device_id.to_string(), app.app_handle().clone())
+                .await;
+        assert!(result.is_ok());
+        let peer_id_str = result.unwrap();
+        assert!(!peer_id_str.is_empty());
+        let state = app.state::<AppState>();
+        let handle_lock = state.p2p_handle.lock().unwrap();
+        assert!(handle_lock.is_some());
+        let handle = handle_lock.as_ref().unwrap();
+        assert_eq!(handle.local_peer_id.to_string(), peer_id_str);
+    }
 }

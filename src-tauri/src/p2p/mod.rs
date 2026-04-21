@@ -1,4 +1,5 @@
 // pub mod chat;
+pub use crate::p2p::message::ChatMessage;
 pub mod error;
 pub mod identity;
 pub mod message;
