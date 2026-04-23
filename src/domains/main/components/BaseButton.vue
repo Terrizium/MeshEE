@@ -1,6 +1,7 @@
 <template>
   <button
     class="gradient-button"
+    :class="{'small': small}"
     :disabled="disabled"
     :type="type"
     @click="handleClick"
@@ -16,6 +17,7 @@ import BaseSpinner from './BaseSpinner.vue';
 interface Props {
   disabled?: boolean;
   loading?: boolean;
+  small?: boolean;
   type?: 'button' | 'submit' | 'reset';
 }
 
@@ -63,6 +65,13 @@ const handleClick = (event: MouseEvent) => {
 .gradient-button:hover:not(:disabled) {
   box-shadow: 0 0 0 6px rgba(178, 36, 239, 0.4), 0 0 20px rgba(117, 121, 255, 0.3);
   border-color: rgba(255, 255, 255, 0.5);
+}
+
+.small {
+  height: 20px !important;
+  width: 20px !important;
+  display: flex;
+  align-items: center;
 }
 
 .gradient-button:disabled {

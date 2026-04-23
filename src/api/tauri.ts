@@ -1,11 +1,11 @@
-import { Api, Chat, Message } from "../types";
+import { Api, Chat, Message, Paginate } from "../types";
 import { User } from "../types";
 
 export const tauri: Api = {
     login: async (login, password) => getApi().login(login, password),
     getUser: async () => getApi().getUser(),
     getChats: async () => getApi().getChats(),
-    getChat: async (id) => getApi().getChat(id),
+    getChat: async (id, meta) => getApi().getChat(id, meta),
     sendMessage: async (id, msg) => getApi().sendMessage(id, msg)
 }
 
@@ -24,7 +24,7 @@ const mockApi: Api = {
     }),
     getChats: async (): Promise<Chat[]> => ([
         {
-            id,
+            id: 1,
             login: 'StaticRange',
             has_unread: true,
         },
@@ -39,28 +39,41 @@ const mockApi: Api = {
             has_unread: false,
         },
     ]),
-    getChat: async (): Promise<Message[]> => ([
+    getChat: async (): Promise<{meta: Paginate; messages: Message[]}> => ({
+        meta: {
+        page: counter++,
+        per_page: 20,
+        total: 100
+    },messages: [
         {
             id: 1,
-            msg: 'Hi there',
-            date: '07:02:2023 20:30'
+            body: 'Hi there',
+            is_read: false,
+            date: '07:02:2023 20:30',
+            user_id: 2
         },
         {
             id: 2,
-            msg: 'STRrrrrrr',
-            date: '07:02:2023 20:30'
+            body: 'STRrrrrrr',
+            is_read: false,
+            date: '07:02:2023 20:30',
+            user_id: 2
         },
         {
             id: 3,
-            msg: 'Hey hey hey you are',
-            date: '07:02:2023 20:30'
+            body: 'Hey hey hey you are',
+            is_read: false,
+            date: '07:02:2023 20:30',
+            user_id: 2
         },
-    ]),
+    ]}),
     sendMessage: async () => ({
             id: 4,
-            msg: '-|-_-|-/',
-            date: '07:02:2023 20:30'
+            body: '-|-_-|-/',
+            is_read: false,
+            date: '07:02:2023 20:30',
+            user_id: 2
         })
 }
 
-
+let counter = 1;
