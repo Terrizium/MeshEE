@@ -43,7 +43,7 @@ const mockApi: Api = {
         meta: {
         page: counter++,
         per_page: 20,
-        total: 100
+        total: 25
     },messages: [
         {
             id: 1,
