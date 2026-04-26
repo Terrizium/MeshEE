@@ -195,7 +195,8 @@ defineExpose({
 .icon-menu__content {
   display: flex;
   flex-direction: column;
-  padding: 8px 0;
+  gap: 8px;
+  padding: 8px 4px;
 }
 
 /* Анимация меню */

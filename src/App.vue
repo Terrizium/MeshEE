@@ -46,8 +46,8 @@ const onMenuClose = () => console.log('меню закрыто');
         <p>Здесь будут настройки приложения</p>
       </div>
       <template #footer>
-        <BaseButton @click="modalVisible = false">Закрыть</BaseButton>
-        <BaseButton variant="primary">Сохранить</BaseButton>
+        <BaseButton variant="outlined" @click="modalVisible = false">Закрыть</BaseButton>
+        <BaseButton variant="secondary">Сохранить</BaseButton>
       </template>
     </BaseModal>
   </div>
