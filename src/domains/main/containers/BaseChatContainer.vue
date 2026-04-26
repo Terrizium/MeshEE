@@ -30,7 +30,6 @@
        <ChatRoom
        v-if="selectedChat && user"
       ref="chatMessagesRef"
-      :messages="messages"
       :chat-id="selectedChat.id"
       :current-user-id="user.id"
       :other-user-login="selectedChat.login"
@@ -61,12 +60,11 @@ const {
 
 const { user } = useAuth();
 
-const { getChats, getChat } = useApi();
+const { getChats } = useApi();
 
 const mobileView: Ref<'room' | 'chats'> = ref('chats');
 const selectedChat: Ref<Chat | null> = ref(null);
 const chatsList: Ref<Chat[] | []> = ref([]);
-const messages: Ref<Message[] | []> = ref([]);
 
     function goBackToChats() {
         mobileView.value = 'chats';
@@ -75,11 +73,6 @@ const messages: Ref<Message[] | []> = ref([]);
     function selectChat(chat: Chat) {
         selectedChat.value = chat;
         mobileView.value = 'room';
-        getChat(chat.id)
-        .then(res => {
-          messages.value = res
-          
-        })
     }
 
     onMounted(() => {
@@ -103,6 +96,7 @@ const messages: Ref<Message[] | []> = ref([]);
   flex: 1;
   display: flex;
   overflow: hidden;
+  height: 100%;
 }
 
 .chats-list {
@@ -112,8 +106,11 @@ const messages: Ref<Message[] | []> = ref([]);
 }
 
 .room-content {
-  flex: 1;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
 }
 
 /* Мобильная раскладка */

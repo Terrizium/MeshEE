@@ -27,6 +27,32 @@ html, body, #app {
   flex-direction: column;
 }
 
+/* Глобальная кастомизация скроллбара (WebKit) */
+*::-webkit-scrollbar {
+  width: 8px;          /* ширина вертикального скроллбара */
+  height: 8px;         /* высота горизонтального */
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--color-surface, #1e1e2a);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-action, #2dd4bf); /* бирюзовый из твоей переменной */
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-action-hover, #195f57); /* можно задать более тёмный оттенок */
+}
+
+/* Для Firefox (работает в версиях 64+) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-action, #2dd4bf) var(--color-surface, #1e1e2a);
+}
+
 .titlebar {
   height: 32px;
   background: var(--color-surface);
