@@ -1,25 +1,40 @@
 <template>
   <div class="app-layout">
-    <header class="app-bar">Мой апп-бар</header>
     <div class="main-container">
       <aside 
         class="chats-list"
         :class="{ 'mobile-hidden': isMobile && mobileView !== 'chats' }"
       >
-        <ChatsList @select-chat="selectChat" />
+      <BaseVirtualScroll v-if="chatsList.length" :items="chatsList">
+        <template #default="{item}">
+          <BaseChatList :active="selectedChat?.id === item.id" :chat="item" @click="selectChat(item)" />
+        </template>        
+      </BaseVirtualScroll>
+        
       </aside>
 
       <main 
         class="room-content"
         :class="{ 'mobile-hidden': isMobile && mobileView !== 'room' }"
       >
-        <button v-if="isMobile && mobileView === 'room'" @click="goBackToChats">
-          ← Назад
-        </button>
-        <RoomContent />
-        <footer v-if="isDesktop || mobileView === 'room'" class="app-footer">
-      Мой футер (навигация)
-    </footer>
+      <BaseAppBar v-if="selectedChat">
+        <template #start>
+           <BaseButton small v-if="isMobile && mobileView === 'room'" @click="goBackToChats">
+            <span style="height: 100%; display: flex; align-items: center; padding-bottom: 4px;">←</span>
+           </BaseButton>
+        </template>
+        <template #title>
+          <span>{{ selectedChat.login }}</span>
+        </template>
+      </BaseAppBar>
+       <ChatRoom
+       v-if="selectedChat && user"
+      ref="chatMessagesRef"
+      :chat-id="selectedChat.id"
+      :current-user-id="user.id"
+      :other-user-login="selectedChat.login"
+    />
+    
       </main>
     </div>
 
@@ -27,18 +42,29 @@
 </template>
 
 <script setup lang="ts">
-import { Ref, ref } from 'vue';
+import { onMounted, Ref, ref } from 'vue';
 import { useBreakpoints } from '../../../composables/useBreakpoints';
-import { Chat } from '../../../types';
+import { Chat, Message } from '../../../types';
+import { useApi } from '../../../composables/useApi';
+import BaseChatList from '../components/BaseChatList.vue'
+import BaseVirtualScroll from '../components/BaseVirtualScroll.vue';
+import BaseAppBar from '../components/BaseAppBar.vue';
+import BaseButton from '../components/BaseButton.vue';
+import ChatRoom from '../components/ChatRoom.vue';
+import { useAuth } from '../../../composables/useAuth';
 
 
 const {
-    isDesktop,
     isMobile
 } = useBreakpoints();
 
+const { user } = useAuth();
+
+const { getChats } = useApi();
+
 const mobileView: Ref<'room' | 'chats'> = ref('chats');
 const selectedChat: Ref<Chat | null> = ref(null);
+const chatsList: Ref<Chat[] | []> = ref([]);
 
     function goBackToChats() {
         mobileView.value = 'chats';
@@ -46,8 +72,15 @@ const selectedChat: Ref<Chat | null> = ref(null);
 
     function selectChat(chat: Chat) {
         selectedChat.value = chat;
-        mobileView.value = 'room'
+        mobileView.value = 'room';
     }
+
+    onMounted(() => {
+      getChats()
+      .then(res => {
+        chatsList.value = res;
+      });
+    })
 
 </script>
 
@@ -63,6 +96,7 @@ const selectedChat: Ref<Chat | null> = ref(null);
   flex: 1;
   display: flex;
   overflow: hidden;
+  height: 100%;
 }
 
 .chats-list {
@@ -72,8 +106,11 @@ const selectedChat: Ref<Chat | null> = ref(null);
 }
 
 .room-content {
-  flex: 1;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
 }
 
 /* Мобильная раскладка */

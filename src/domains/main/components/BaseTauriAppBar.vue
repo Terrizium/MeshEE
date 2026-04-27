@@ -2,6 +2,7 @@
     <div data-tauri-drag-region class="titlebar">
       <div class="titlebar-text" style="flex:1; padding-left: 16px;">MeshEE</div>
       <div class="titlebar-buttons">
+        <slot />
        <button class="titlebar-button minimize" @click="minimizeWindow">─</button>
        <button class="titlebar-button maximize" @click="toggleMaximizeWindow">□</button>
        <button class="titlebar-button close" @click="closeWindow">✕</button>
