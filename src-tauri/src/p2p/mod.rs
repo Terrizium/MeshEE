@@ -1,9 +1,18 @@
+use libp2p::PeerId;
+
 // pub mod chat;
 pub use crate::p2p::message::ChatMessage;
 pub mod error;
 pub mod identity;
 pub mod message;
 pub mod swarm;
+
+pub enum P2pCommand {
+    SendMessage {
+        peer_id: PeerId,
+        message: ChatMessage,
+    },
+}
 
 #[cfg(test)]
 mod tests {
@@ -118,8 +127,8 @@ mod tests {
        let kp1 = get_peer_id_from_device_id(id1).unwrap();
        let kp2 = get_peer_id_from_device_id(id2).unwrap();
 
-       let (mut swarm1, _, mut rx1) = create_swarm_with_rx(kp1).await.unwrap();
-       let (mut swarm2, tx2, mut rx2) = create_swarm_with_rx(kp2).await.unwrap();
+       let (mut swarm1,_, _, _, mut rx1) = create_swarm_with_rx(kp1).await.unwrap();
+       let (mut swarm2, _, _, tx2, mut rx2) = create_swarm_with_rx(kp2).await.unwrap();
        connect_swarms(&mut swarm1, &mut swarm2).await;
        let msg = ChatMessage::new("peer1".into(),"Hello P2P!".into());
        let peer2 = *swarm2.local_peer_id();

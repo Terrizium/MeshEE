@@ -16,6 +16,7 @@ use crate::p2p::{
     error::P2pError,
     identity,
     message::{ChatMessage, ChatProtocol, JsonCodec},
+    P2pCommand,
 };
 
 #[derive(NetworkBehaviour)]
@@ -93,42 +94,58 @@ pub async fn create_swarm_with_rx(
 ) -> Result<
     (
         Swarm<ChatBehaviour>,
+        mpsc::UnboundedSender<P2pCommand>,
+        mpsc::UnboundedReceiver<P2pCommand>,
         mpsc::UnboundedSender<ChatMessage>,
         mpsc::UnboundedReceiver<ChatMessage>,
     ),
     P2pError,
 > {
     let swarm = create_swarm(keypair).await.unwrap();
-    let (tx, rx) = mpsc::unbounded_channel();
-    Ok((swarm, tx, rx))
+    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    let (event_tx, event_rx) = mpsc::unbounded_channel();
+    Ok((swarm, cmd_tx, cmd_rx, event_tx, event_rx))
 }
 
 pub async fn run_swarm_loop(
     mut swarm: Swarm<ChatBehaviour>,
-    tx: mpsc::UnboundedSender<ChatMessage>,
+    mut cmd_rx: mpsc::UnboundedReceiver<P2pCommand>,
+    event_tx: mpsc::UnboundedSender<ChatMessage>,
 ) {
     loop {
-        match swarm.select_next_some().await {
-            SwarmEvent::Behaviour(ChatBehaviourEvent::Messages(
-                request_response::Event::Message {
-                    message:
-                        request_response::Message::Request {
-                            request, channel, ..
+        tokio::select! {
+            event = swarm.select_next_some() => {
+                match event {
+                    SwarmEvent::Behaviour(ChatBehaviourEvent::Messages(
+                        request_response::Event::Message {
+                            message:
+                                request_response::Message::Request {
+                                    request, channel, ..
+                                },
+                            ..
                         },
-                    ..
-                },
-            )) => {
-                // Автоматический ACK (RequestResponse требует ответа)
-                let _ = swarm
-                    .behaviour_mut()
-                    .messages
-                    .send_response(channel, request.clone());
-                let _ = tx.send(request);
+                    )) => {
+                        // Автоматический ACK (RequestResponse требует ответа)
+                        let _ = swarm
+                            .behaviour_mut()
+                            .messages
+                            .send_response(channel, request.clone());
+                        let _ = event_tx.send(request);
+                    }
+                    SwarmEvent::ConnectionClosed { .. } | SwarmEvent::IncomingConnectionError { .. } => {
+                        break;
+                    }
+                    _ => {} // ping, identify
+                }
             }
-            SwarmEvent::ConnectionClosed { .. } | SwarmEvent::IncomingConnectionError { .. } => {
-                break;
+            cmd = cmd_rx.recv() => {
+                match cmd {
+                    Some(P2pCommand::SendMessage { peer_id, message }) => {
+                        let _ = swarm.behaviour_mut().messages.send_request(&peer_id, message);
+                    }
+                    None => break,
+                }
             }
-            _ => {} // ping, identify
         }
     }
 }
