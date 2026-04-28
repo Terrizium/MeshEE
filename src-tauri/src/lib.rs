@@ -7,6 +7,8 @@ mod p2p;
 use libp2p::identity::Keypair;
 use libp2p::PeerId;
 use serde_json::json;
+use std::fmt::format;
+use std::path::Path;
 use std::sync::Mutex;
 use tauri::Emitter;
 use tauri::Manager;
@@ -18,6 +20,38 @@ use crate::auth::Profile;
 use crate::auth::ProfileData;
 use crate::p2p::ChatMessage;
 use crate::p2p::P2pCommand;
+
+pub async fn process_and_save_incoming_message(
+    msg: &ChatMessage,
+    username: &str,
+    data_dir: &Path,
+) -> Result<(), String> {
+    msg.verify_signature()
+        .map_err(|e| format!("Invalid signature: {}", e))?;
+    let mut proifle = auth::load(username, data_dir)
+        .await
+        .map_err(|e| format!("Failed to load proifle: {}", e))?;
+    let auth_msg = auth::Message {
+        username: msg.sender.clone(),
+        text: msg.content.clone(),
+        created_at: chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
+            .unwrap_or_default()
+            .to_rfc3339(),
+        received_at: chrono::Local::now().to_rfc3339(),
+    };
+    if let Some(chat) = proifle.chats.iter_mut().find(|c| c.name == msg.sender) {
+        chat.messages.push(auth_msg);
+    } else {
+        proifle.chats.push(auth::Chat {
+            name: msg.sender.clone(),
+            messages: vec![auth_msg],
+        });
+    }
+    auth::save(proifle, data_dir)
+        .await
+        .map_err(|e| format!("Failed to save profile: {}", e))?;
+    Ok(())
+}
 
 pub struct P2pHandle {
     pub cmd_tx: mpsc::UnboundedSender<P2pCommand>,
@@ -45,6 +79,18 @@ impl Default for AppState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[tauri::command]
+fn get_local_peer_id(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let handle_lock = state
+        .p2p_handle
+        .lock()
+        .map_err(|e| format!("Failed to lock state: {}", e))?;
+    let handle = handle_lock
+        .as_ref()
+        .ok_or("P2P not initialized: call init_p2p first")?;
+    Ok(handle.local_peer_id.to_string())
 }
 
 #[tauri::command]
@@ -181,6 +227,7 @@ pub fn run() {
             start_periodic_messages,
             init_p2p,
             send_p2p_message,
+            get_local_peer_id,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -190,6 +237,80 @@ pub fn run() {
 mod tests {
     use super::*;
     use tauri::test::{mock_app, mock_builder, mock_context, noop_assets};
+
+    #[tokio::test]
+    async fn incoming_message_is_verified_and_saved_to_profile() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let username = "test_user";
+        let device_id = "0000000000000000000000000000000000000000000000000000000000000001";
+
+        let mut profile_data = ProfileData::default();
+        profile_data.username = username.to_string();
+        auth::save(profile_data, temp_dir.path()).await.unwrap();
+
+        let kp = p2p::identity::get_peer_id_from_device_id(device_id).unwrap();
+        let incoming_msg = crate::p2p::message::ChatMessage::new(
+            "peer123".to_string(),
+            "Hello from test!".to_string(),
+        )
+        .sign(&kp);
+        let result =
+            process_and_save_incoming_message(&incoming_msg, username, temp_dir.path()).await;
+        assert!(result.is_ok());
+        let saved_data = auth::load(username, temp_dir.path()).await.unwrap();
+        assert_eq!(saved_data.chats.len(), 1);
+        assert_eq!(saved_data.chats[0].name, "peer123");
+    }
+
+    #[tokio::test]
+    async fn incoming_message_with_invalid_signature_is_rejected() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let username = "test_user";
+        let device_id = "0000000000000000000000000000000000000000000000000000000000000001";
+
+        let mut profile_data = ProfileData::default();
+        profile_data.username = username.to_string();
+        auth::save(profile_data, temp_dir.path()).await.unwrap();
+
+        let mut fake_msg =
+            crate::p2p::message::ChatMessage::new("attacker".to_string(), "Hacked!".to_string());
+        fake_msg.signature = vec![1, 2, 3];
+        let result = process_and_save_incoming_message(&fake_msg, username, temp_dir.path()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid signature"));
+    }
+
+    #[test]
+    fn get_local_peer_iid_returns_when_initialized() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let device_id = "0000000000000000000000000000000000000000000000000000000000000001";
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let _ = init_p2p::<tauri::test::MockRuntime>(
+                device_id.to_string(),
+                app.app_handle().clone(),
+            )
+            .await;
+        });
+        let result = get_local_peer_id(app.state::<AppState>());
+        assert!(result.is_ok());
+        let peer_id_str = result.unwrap();
+        assert!(!peer_id_str.is_empty());
+    }
+
+    #[test]
+    fn get_local_peer_id_returns_error_when_not_initialized() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let result = get_local_peer_id(app.state::<AppState>());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not initialized"));
+    }
 
     #[tokio::test]
     async fn send_p2p_message_returns_ok_for_valid_input() {

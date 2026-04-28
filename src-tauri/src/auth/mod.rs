@@ -3,7 +3,7 @@
 use std::path::Path;
 
 pub use crate::auth::profile::Profile;
-pub use crate::auth::storage::ProfileData;
+pub use crate::auth::storage::{Chat, Message, ProfileData};
 
 pub mod error;
 mod profile;
