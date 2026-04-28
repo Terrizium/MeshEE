@@ -48,6 +48,18 @@ impl Default for AppState {
 }
 
 #[tauri::command]
+fn get_local_peer_id(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let handle_lock = state
+        .p2p_handle
+        .lock()
+        .map_err(|e| format!("Failed to lock state: {}", e))?;
+    let handle = handle_lock
+        .as_ref()
+        .ok_or("P2P not initialized: call init_p2p first")?;
+    Ok(handle.local_peer_id.to_string())
+}
+
+#[tauri::command]
 async fn send_p2p_message<R: tauri::Runtime>(
     peer_id_str: String,
     content: String,
@@ -190,6 +202,38 @@ pub fn run() {
 mod tests {
     use super::*;
     use tauri::test::{mock_app, mock_builder, mock_context, noop_assets};
+
+    #[test]
+    fn get_local_peer_iid_returns_when_initialized() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let device_id = "0000000000000000000000000000000000000000000000000000000000000001";
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let _ = init_p2p::<tauri::test::MockRuntime>(
+                device_id.to_string(),
+                app.app_handle().clone(),
+            )
+            .await;
+        });
+        let result = get_local_peer_id(app.state::<AppState>());
+        assert!(result.is_ok());
+        let peer_id_str = result.unwrap();
+        assert!(!peer_id_str.is_empty());
+    }
+
+    #[test]
+    fn get_local_peer_id_returns_error_when_not_initialized() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let result = get_local_peer_id(app.state::<AppState>());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not initialized"));
+    }
 
     #[tokio::test]
     async fn send_p2p_message_returns_ok_for_valid_input() {
