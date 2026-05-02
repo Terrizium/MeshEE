@@ -7,6 +7,11 @@ export const tauri: Api = {
     getChats: async () => getApi().getChats(),
     getChat: async (id, meta) => getApi().getChat(id, meta),
     sendMessage: async (id, msg) => getApi().sendMessage(id, msg)
+
+    //func connect_to_peer(peerId: string): Promise<Chat> 
+    //func get_my_peer_id: string
+    //emit new-message
+    //emit new-chat
 }
 
 function getApi(): Api {
