@@ -6,6 +6,7 @@ mod p2p;
 // use futures::channel::mpsc;
 use libp2p::identity::Keypair;
 use libp2p::PeerId;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fmt::format;
 use std::path::Path;
@@ -20,6 +21,79 @@ use crate::auth::Profile;
 use crate::auth::ProfileData;
 use crate::p2p::ChatMessage;
 use crate::p2p::P2pCommand;
+
+//TODO:: drop device_id from ProfileData
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct User {
+    pub id: String,
+    pub login: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ChatInfo {
+    pub id: String,
+    pub login: String,
+    pub has_unread: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MessageInfo {
+    pub id: String,
+    pub body: String,
+    pub is_read: bool,
+    pub date: String,
+    pub user_id: u32, // 0 - user, 1 - remote_user
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PaginatedMessages {
+    pub meta: PageMeta,
+    pub messages: Vec<MessageInfo>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PageMeta {
+    pub page: usize,
+    pub per_page: usize,
+    pub total: usize,
+}
+
+pub async fn handle_incoming_message<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    msg: ChatMessage,
+) -> Result<(), String> {
+    let state = app_handle.state::<AppState>();
+    let username = state
+        .cur_profile
+        .lock()
+        .map_err(|e| format!("Failed to lock state: {}", e))?
+        .as_ref()
+        .ok_or("No active profile")?
+        .username
+        .clone();
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    process_and_save_incoming_message(&msg, &username, &data_dir).await?;
+    let _ = app_handle.emit(
+        "new-message",
+        &serde_json::json!({
+            "chat_id": msg.sender,
+            "message": {
+                "id": msg.id,
+                "body": msg.content,
+                "is_read": false,
+                "date": chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
+                    .unwrap_or_default()
+                    .to_rfc3339(),
+                "user_id": 1,
+            }
+        }),
+    );
+    Ok(())
+}
 
 pub async fn process_and_save_incoming_message(
     msg: &ChatMessage,
@@ -55,7 +129,7 @@ pub async fn process_and_save_incoming_message(
 
 pub struct P2pHandle {
     pub cmd_tx: mpsc::UnboundedSender<P2pCommand>,
-    pub event_rx: Mutex<mpsc::UnboundedReceiver<ChatMessage>>,
+    // pub event_rx: Mutex<mpsc::UnboundedReceiver<ChatMessage>>,
     pub task: JoinHandle<()>,
     pub local_peer_id: PeerId,
     pub keypair: Keypair,
@@ -126,7 +200,7 @@ async fn init_p2p<R: tauri::Runtime>(
     let keypair = p2p::identity::get_peer_id_from_device_id(&device_id)
         .map_err(|e| format!("Invalid device_id: {}", e))?;
     let peer_id = PeerId::from(keypair.public());
-    let (mut swarm, cmd_tx, cmd_rx, event_tx, event_rx) =
+    let (mut swarm, cmd_tx, cmd_rx, event_tx, mut event_rx) =
         p2p::swarm::create_swarm_with_rx(keypair.clone())
             .await
             .map_err(|e| format!("Failed to create swarm: {}", e))?;
@@ -137,15 +211,24 @@ async fn init_p2p<R: tauri::Runtime>(
                 .map_err(|e| e.to_string())?,
         )
         .map_err(|e| format!("Failed to listen: {}", e))?;
-    let tx_send = event_tx.clone();
-    let task = tokio::spawn(async move {
-        p2p::swarm::run_swarm_loop(swarm, cmd_rx, event_tx).await;
-    });
     let state = app_handle.state::<AppState>();
+    let handle_clone = app_handle.clone();
+    let task = tokio::spawn(async move {
+        let swarm_task = tokio::spawn(async move {
+            p2p::swarm::run_swarm_loop(swarm, cmd_rx, event_tx).await;
+        });
+        let incoming_task = tokio::spawn(async move {
+            while let Some(msg) = event_rx.recv().await {
+                if let Err(e) = handle_incoming_message(handle_clone.clone(), msg).await {
+                    eprintln!("Failed to handle incoming message: {}", e);
+                }
+            }
+        });
+        let _ = tokio::join!(swarm_task, incoming_task);
+    });
     let mut lock = state.p2p_handle.lock().unwrap();
     *lock = Some(P2pHandle {
         cmd_tx,
-        event_rx: Mutex::new(event_rx),
         task,
         local_peer_id: peer_id,
         keypair,
@@ -180,15 +263,69 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-fn login(name: &str, password: &str, state: tauri::State<'_, AppState>) -> Result<bool, String> {
-    match auth::login(name, password) {
-        Ok(profile) => {
-            //TODO:: Если переходить на tokio, то +async и заменить Mutex
+async fn get_user<R: tauri::Runtime>(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle<R>,
+) -> Result<User, String> {
+    let lock = state
+        .cur_profile
+        .lock()
+        .map_err(|e| format!("Lock error: {}", e))?;
+    let profile = lock.as_ref().ok_or("No user logged in")?;
+    Ok(User {
+        id: profile.username.clone(),
+        login: profile.username.clone(),
+    })
+}
+
+#[tauri::command]
+async fn login<R: tauri::Runtime>(
+    name: &str,
+    password: &str,
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle<R>,
+) -> Result<User, String> {
+    let username = name.trim();
+    if username.is_empty() {
+        return Err("Username cannot be empty".into());
+    }
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    match auth::load(username, &data_dir).await {
+        Ok(mut profile_data) => {
+            let test_profile = Profile::new(username.to_string(), password.to_string())
+                .map_err(|e| format!("Failed to create profile: {}", e))?;
+            let profile = Profile {
+                username: username.to_string(),
+                device_id: test_profile.device_id.clone(),
+            };
             let mut lock = state.cur_profile.lock().unwrap();
             *lock = Some(profile);
-            Ok(true)
+            Ok(User {
+                id: username.to_string(),
+                login: username.to_string(),
+            })
         }
-        Err(err) => Err(format!("Ошибка входа: {}", err.to_string())),
+        Err(auth::error::AuthError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            let profile = Profile::new(username.to_string(), password.to_string())
+                .map_err(|e| format!("Failed to create profile: {}", e))?;
+            let mut profile_data = ProfileData::default();
+            profile_data.username = username.to_string();
+            profile_data.device_id = profile.device_id.clone();
+            auth::save(profile_data, &data_dir)
+                .await
+                .map_err(|e| format!("Failed to save profile: {}", e))?;
+            let mut lock = state.cur_profile.lock().unwrap();
+            *lock = Some(profile);
+            Ok(User {
+                id: username.to_string(),
+                login: username.to_string(),
+            })
+        }
+        Err(e) => Err(format!("Failed to load profile: {}", e)),
     }
 }
 
@@ -224,6 +361,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             login,
+            get_user,
             start_periodic_messages,
             init_p2p,
             send_p2p_message,
@@ -235,8 +373,89 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use crate::p2p::identity::get_peer_id_from_device_id;
+
     use super::*;
     use tauri::test::{mock_app, mock_builder, mock_context, noop_assets};
+
+    #[tokio::test]
+    async fn test_login_returns_user_and_saves_profile_on_first_login() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let app_handle = app.handle();
+        let username = "newuser";
+        let password = "pass123";
+        let result =
+            login::<tauri::test::MockRuntime>(username, password, app.state(), app_handle.clone())
+                .await;
+        assert!(result.is_ok());
+        let user = result.unwrap();
+        assert_eq!(user.login, username);
+
+        let data_dir = app.app_handle().path().app_data_dir().unwrap();
+        let loaded = auth::load(username, &data_dir).await.unwrap();
+        assert_eq!(loaded.username, username);
+    }
+
+    #[tokio::test]
+    async fn test_get_user_returns_current_user() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let app_handle = app.handle();
+        let username = "current";
+        let _ =
+            login::<tauri::test::MockRuntime>(username, "pass", app.state(), app_handle.clone())
+                .await
+                .unwrap();
+        let user = get_user::<tauri::test::MockRuntime>(app.state(), app_handle.clone())
+            .await
+            .unwrap();
+        assert_eq!(user.login, username);
+    }
+
+    #[tokio::test]
+    async fn test_handle_incoming_message_saves_and_emits() {
+        // let temp_dir = tempfile::tempdir().unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let app_handle = app.handle();
+        let data_dir = app_handle.path().app_data_dir().unwrap();
+        let username = "test_user_1";
+
+        let profile = Profile::new(username.to_string(), "pass".to_string()).unwrap();
+        let device_id = profile.device_id.clone();
+        let state = app.state::<AppState>();
+        {
+            let mut lock = state.cur_profile.lock().unwrap();
+            *lock = Some(profile);
+        }
+
+        let mut profile_data = ProfileData::default();
+        profile_data.username = username.to_string();
+        auth::save(profile_data, &data_dir).await.unwrap();
+
+        let keypair = get_peer_id_from_device_id(&device_id).unwrap();
+        let mut msg = ChatMessage::new("test_user_2".to_string(), "Hello!".to_string());
+        msg.sender_public_key = keypair.public().encode_protobuf();
+        let signed_msg = msg.sign(&keypair);
+        let result = handle_incoming_message(app_handle.clone(), signed_msg).await;
+        assert!(result.is_ok());
+
+        let loaded = auth::load(username, &data_dir).await.unwrap();
+        let test_user_2_chat = loaded
+            .chats
+            .iter()
+            .find(|c| c.name == "test_user_2")
+            .unwrap();
+        assert_eq!(test_user_2_chat.messages.len(), 1);
+        assert_eq!(test_user_2_chat.messages[0].text, "Hello!");
+    }
 
     #[tokio::test]
     async fn incoming_message_is_verified_and_saved_to_profile() {
