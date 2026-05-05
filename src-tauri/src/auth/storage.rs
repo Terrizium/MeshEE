@@ -50,6 +50,7 @@ pub async fn load(username: String, data_dir: &Path) -> Result<ProfileData, Auth
 pub struct ProfileData {
     pub username: String,
     pub peer_id: String,
+    pub device_id: String,
     #[serde(default)]
     pub chats: Vec<Chat>,
     #[serde(default)]
@@ -60,6 +61,7 @@ impl ProfileData {
         ProfileData {
             username: String::new(),
             peer_id: String::new(),
+            device_id: String::new(),
             chats: Vec::new(),
             known_peers: HashMap::new(),
         }

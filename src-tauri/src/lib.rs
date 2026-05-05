@@ -6,6 +6,7 @@ mod p2p;
 // use futures::channel::mpsc;
 use libp2p::identity::Keypair;
 use libp2p::PeerId;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fmt::format;
 use std::path::Path;
@@ -20,6 +21,43 @@ use crate::auth::Profile;
 use crate::auth::ProfileData;
 use crate::p2p::ChatMessage;
 use crate::p2p::P2pCommand;
+
+//TODO:: drop device_id from ProfileData
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct User {
+    pub id: String,
+    pub login: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ChatInfo {
+    pub id: String,
+    pub login: String,
+    pub has_unread: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MessageInfo {
+    pub id: String,
+    pub body: String,
+    pub is_read: bool,
+    pub date: String,
+    pub user_id: u32, // 0 - user, 1 - remote_user
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PaginatedMessages {
+    pub meta: PageMeta,
+    pub messages: Vec<MessageInfo>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PageMeta {
+    pub page: usize,
+    pub per_page: usize,
+    pub total: usize,
+}
 
 pub async fn handle_incoming_message<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
@@ -225,15 +263,69 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-fn login(name: &str, password: &str, state: tauri::State<'_, AppState>) -> Result<bool, String> {
-    match auth::login(name, password) {
-        Ok(profile) => {
-            //TODO:: Если переходить на tokio, то +async и заменить Mutex
+async fn get_user<R: tauri::Runtime>(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle<R>,
+) -> Result<User, String> {
+    let lock = state
+        .cur_profile
+        .lock()
+        .map_err(|e| format!("Lock error: {}", e))?;
+    let profile = lock.as_ref().ok_or("No user logged in")?;
+    Ok(User {
+        id: profile.username.clone(),
+        login: profile.username.clone(),
+    })
+}
+
+#[tauri::command]
+async fn login<R: tauri::Runtime>(
+    name: &str,
+    password: &str,
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle<R>,
+) -> Result<User, String> {
+    let username = name.trim();
+    if username.is_empty() {
+        return Err("Username cannot be empty".into());
+    }
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    match auth::load(username, &data_dir).await {
+        Ok(mut profile_data) => {
+            let test_profile = Profile::new(username.to_string(), password.to_string())
+                .map_err(|e| format!("Failed to create profile: {}", e))?;
+            let profile = Profile {
+                username: username.to_string(),
+                device_id: test_profile.device_id.clone(),
+            };
             let mut lock = state.cur_profile.lock().unwrap();
             *lock = Some(profile);
-            Ok(true)
+            Ok(User {
+                id: username.to_string(),
+                login: username.to_string(),
+            })
         }
-        Err(err) => Err(format!("Ошибка входа: {}", err.to_string())),
+        Err(auth::error::AuthError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            let profile = Profile::new(username.to_string(), password.to_string())
+                .map_err(|e| format!("Failed to create profile: {}", e))?;
+            let mut profile_data = ProfileData::default();
+            profile_data.username = username.to_string();
+            profile_data.device_id = profile.device_id.clone();
+            auth::save(profile_data, &data_dir)
+                .await
+                .map_err(|e| format!("Failed to save profile: {}", e))?;
+            let mut lock = state.cur_profile.lock().unwrap();
+            *lock = Some(profile);
+            Ok(User {
+                id: username.to_string(),
+                login: username.to_string(),
+            })
+        }
+        Err(e) => Err(format!("Failed to load profile: {}", e)),
     }
 }
 
@@ -269,6 +361,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             login,
+            get_user,
             start_periodic_messages,
             init_p2p,
             send_p2p_message,
@@ -284,6 +377,45 @@ mod tests {
 
     use super::*;
     use tauri::test::{mock_app, mock_builder, mock_context, noop_assets};
+
+    #[tokio::test]
+    async fn test_login_returns_user_and_saves_profile_on_first_login() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let app_handle = app.handle();
+        let username = "newuser";
+        let password = "pass123";
+        let result =
+            login::<tauri::test::MockRuntime>(username, password, app.state(), app_handle.clone())
+                .await;
+        assert!(result.is_ok());
+        let user = result.unwrap();
+        assert_eq!(user.login, username);
+
+        let data_dir = app.app_handle().path().app_data_dir().unwrap();
+        let loaded = auth::load(username, &data_dir).await.unwrap();
+        assert_eq!(loaded.username, username);
+    }
+
+    #[tokio::test]
+    async fn test_get_user_returns_current_user() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let app_handle = app.handle();
+        let username = "current";
+        let _ =
+            login::<tauri::test::MockRuntime>(username, "pass", app.state(), app_handle.clone())
+                .await
+                .unwrap();
+        let user = get_user::<tauri::test::MockRuntime>(app.state(), app_handle.clone())
+            .await
+            .unwrap();
+        assert_eq!(user.login, username);
+    }
 
     #[tokio::test]
     async fn test_handle_incoming_message_saves_and_emits() {
