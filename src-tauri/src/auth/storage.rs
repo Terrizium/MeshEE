@@ -85,6 +85,8 @@ impl ProfileData {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Chat {
     pub name: String,
+    #[serde(default)]
+    pub peer_id: String,
     pub messages: Vec<Message>,
 }
 
@@ -92,6 +94,7 @@ impl Chat {
     fn default() -> Self {
         Self {
             name: String::new(),
+            peer_id: String::new(),
             messages: Vec::new(),
         }
     }
