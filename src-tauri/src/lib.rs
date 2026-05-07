@@ -118,6 +118,7 @@ pub async fn process_and_save_incoming_message(
     } else {
         proifle.chats.push(auth::Chat {
             name: msg.sender.clone(),
+            peer_id: msg.sender.clone(),
             messages: vec![auth_msg],
         });
     }
@@ -153,6 +154,221 @@ impl Default for AppState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[tauri::command]
+async fn connect_to_peer<R: tauri::Runtime>(
+    peer_id: String,
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle<R>,
+) -> Result<ChatInfo, String> {
+    let username = {
+        let lock = state
+            .cur_profile
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        let profile = lock.as_ref().ok_or("No user logged in")?;
+        profile.username.clone()
+    };
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let mut profile_data = auth::load(&username, &data_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if let Some(existing_chat) = profile_data.chats.iter_mut().find(|c| c.peer_id == peer_id) {
+        return Ok(ChatInfo {
+            id: existing_chat.name.clone(),
+            login: existing_chat.name.clone(),
+            has_unread: false,
+        });
+    }
+    profile_data.chats.push(auth::Chat {
+        name: peer_id.clone(),
+        peer_id: peer_id.clone(),
+        messages: Vec::new(),
+    });
+    auth::save(profile_data, &data_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(ChatInfo {
+        id: peer_id.clone(),
+        login: peer_id.clone(),
+        has_unread: false,
+    })
+}
+
+#[tauri::command]
+async fn send_message<R: tauri::Runtime>(
+    chat_id: String,
+    text: String,
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle<R>,
+) -> Result<MessageInfo, String> {
+    let username = {
+        let lock = state
+            .cur_profile
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        let profile = lock.as_ref().ok_or("No user logged in")?;
+        profile.username.clone()
+    };
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let mut profile_data = auth::load(&username, &data_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    let chat = profile_data
+        .chats
+        .iter_mut()
+        .find(|c| c.name == chat_id)
+        .ok_or("Chat not found")?;
+    let peer_id = chat
+        .peer_id
+        .parse::<PeerId>()
+        .map_err(|e| format!("Invalid peeer id in chat: {}", e))?;
+
+    let cmd_tx = {
+        let handle_lock = state
+            .p2p_handle
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        let handle = handle_lock.as_ref().ok_or("P2p not initialized")?;
+        handle.cmd_tx.clone()
+    };
+    let (local_peer_id, keypair) = {
+        let handle_lock = state
+            .p2p_handle
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        let handle = handle_lock.as_ref().ok_or("P2p not initialized")?;
+        (handle.local_peer_id.clone(), handle.keypair.clone())
+    };
+    let msg = ChatMessage::new(local_peer_id.to_string(), text.clone()).sign(&keypair);
+    cmd_tx
+        .send(P2pCommand::SendMessage {
+            peer_id,
+            message: msg.clone(),
+        })
+        .map_err(|e| format!("Failed to send P2p message: {}", e))?;
+    let auth_msg = auth::Message {
+        username: username.clone(),
+        text: msg.content.clone(),
+        created_at: chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
+            .unwrap_or_default()
+            .to_rfc3339(),
+        received_at: chrono::Local::now().to_rfc3339(),
+    };
+    chat.messages.push(auth_msg);
+    auth::save(profile_data, &data_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(MessageInfo {
+        id: msg.id,
+        body: msg.content,
+        is_read: true,
+        date: chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
+            .unwrap_or_default()
+            .to_rfc3339(),
+        user_id: 0,
+    })
+}
+
+#[tauri::command]
+async fn get_chats<R: tauri::Runtime>(
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle<R>,
+) -> Result<Vec<ChatInfo>, String> {
+    let username = {
+        let lock = state
+            .cur_profile
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        let profile = lock.as_ref().ok_or("No user logged in")?;
+        profile.username.clone()
+    };
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let profile_data = auth::load(&username, &data_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut result = Vec::new();
+    for chat in profile_data.chats {
+        let has_unread = chat
+            .messages
+            .iter()
+            .any(|m| m.received_at.is_empty() && m.username != username);
+        result.push(ChatInfo {
+            id: chat.name.clone(),
+            login: chat.name.clone(),
+            has_unread,
+        });
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+async fn get_chat<R: tauri::Runtime>(
+    chat_id: String,
+    page: usize,
+    per_page: usize,
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle<R>,
+) -> Result<PaginatedMessages, String> {
+    let username = {
+        let lock = state
+            .cur_profile
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        let profile = lock.as_ref().ok_or("No user logged in")?;
+        profile.username.clone()
+    };
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let profile_data = auth::load(&username, &data_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    let chat = profile_data
+        .chats
+        .iter()
+        .find(|c| c.name == chat_id)
+        .ok_or("Chat not found")?;
+    let mut messages: Vec<MessageInfo> = chat
+        .messages
+        .iter()
+        .map(|m| MessageInfo {
+            id: format!("{}-{}", m.created_at, m.username),
+            body: m.text.clone(),
+            is_read: !m.received_at.is_empty(),
+            date: m.created_at.clone(),
+            user_id: if m.username == username { 0 } else { 1 },
+        })
+        .collect();
+    messages.sort_by(|a, b| b.date.cmp(&a.date));
+    let total = messages.len();
+    let start = (page - 1) * per_page;
+    let end = (start + per_page).min(total);
+    let paginated = if start < total {
+        messages[start..end].to_vec()
+    } else {
+        vec![]
+    };
+    Ok(PaginatedMessages {
+        meta: PageMeta {
+            page,
+            per_page,
+            total,
+        },
+        messages: paginated,
+    })
 }
 
 #[tauri::command]
@@ -362,6 +578,10 @@ pub fn run() {
             greet,
             login,
             get_user,
+            get_chats,
+            get_chat,
+            connect_to_peer,
+            send_message,
             start_periodic_messages,
             init_p2p,
             send_p2p_message,
@@ -377,6 +597,190 @@ mod tests {
 
     use super::*;
     use tauri::test::{mock_app, mock_builder, mock_context, noop_assets};
+
+    #[tokio::test]
+    async fn test_connect_to_peer_creates_new_chat() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let app_handle = app.handle();
+        let username = "connector";
+        let password = "pass";
+        login::<tauri::test::MockRuntime>(username, password, app.state(), app_handle.clone())
+            .await
+            .unwrap();
+        let peer_id = "12D3KooW...test".to_string();
+        let chat = connect_to_peer::<tauri::test::MockRuntime>(
+            peer_id.clone(),
+            app.state(),
+            app_handle.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(chat.login, peer_id);
+        assert_eq!(chat.has_unread, false);
+
+        let data_dir = app.app_handle().path().app_data_dir().unwrap();
+        let mut profile_data = auth::load(username, &data_dir).await.unwrap();
+        let saved_chat = profile_data
+            .chats
+            .iter()
+            .find(|c| c.peer_id == peer_id)
+            .unwrap();
+        assert_eq!(saved_chat.name, peer_id);
+    }
+
+    #[tokio::test]
+    async fn test_send_message_sends_via_p2p_and_saves_locally() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let app_handle = app.handle();
+        let username = "sender";
+        let password = "pass";
+        login::<tauri::test::MockRuntime>(username, password, app.state(), app_handle.clone())
+            .await
+            .unwrap();
+        // let device_id = {
+        //     let profile = auth::load(username, &app.app_handle().path().app_data_dir().unwrap())
+        //         .await
+        //         .unwrap();
+        //     profile.device_id.clone()
+        // };
+        let device_id = {
+            let state = app.state::<AppState>();
+            let lock = state.cur_profile.lock().unwrap();
+            let profile = lock.as_ref().unwrap();
+            profile.device_id.clone()
+        };
+        init_p2p::<tauri::test::MockRuntime>(device_id, app_handle.clone())
+            .await
+            .unwrap();
+        let local_peer_id = {
+            let state = app.state::<AppState>();
+            let lock = state.p2p_handle.lock().unwrap();
+            let handle = lock.as_ref().unwrap();
+            handle.local_peer_id.to_string()
+        };
+        connect_to_peer::<tauri::test::MockRuntime>(
+            local_peer_id.clone(),
+            app.state(),
+            app_handle.clone(),
+        )
+        .await
+        .unwrap();
+        let msg_text = "Hello via P2P!";
+        let result = send_message::<tauri::test::MockRuntime>(
+            local_peer_id.clone(),
+            msg_text.to_string(),
+            app.state(),
+            app_handle.clone(),
+        )
+        .await;
+        assert!(result.is_ok());
+        let sent_msg = result.unwrap();
+        assert_eq!(sent_msg.body, msg_text);
+        assert_eq!(sent_msg.user_id, 0);
+
+        let data_dir = app.app_handle().path().app_data_dir().unwrap();
+        let profile_data = auth::load(username, &data_dir).await.unwrap();
+        let chat = profile_data
+            .chats
+            .iter()
+            .find(|c| c.peer_id == local_peer_id)
+            .unwrap();
+        assert_eq!(chat.messages.len() > 0, true);
+    }
+
+    #[tokio::test]
+    async fn test_get_chats_returns_list_of_chats_with_unread_flag() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let app_handle = app.handle();
+        let username = "chatter";
+        let password = "pass";
+        let result =
+            login::<tauri::test::MockRuntime>(username, password, app.state(), app_handle.clone())
+                .await
+                .unwrap();
+        let data_dir = app.app_handle().path().app_data_dir().unwrap();
+        let mut profile_data = auth::load(username, &data_dir).await.unwrap();
+        let msg = auth::Message {
+            username: "other-chatter-2".to_string(),
+            text: "Hello from other chatter!".to_string(),
+            created_at: chrono::Local::now().to_rfc3339(),
+            received_at: "".into(),
+        };
+        profile_data.chats.push(auth::Chat {
+            name: "other-chatter-2".to_string(),
+            peer_id: "other-chatter-2".to_string(),
+            messages: vec![msg],
+        });
+        auth::save(profile_data, &data_dir).await.unwrap();
+        let chats = get_chats::<tauri::test::MockRuntime>(app.state(), app_handle.clone())
+            .await
+            .unwrap();
+        let found = chats.iter().find(|c| c.login == "other-chatter-2");
+        assert!(found.is_some());
+        assert!(found.unwrap().has_unread);
+    }
+
+    #[tokio::test]
+    async fn test_get_chat_returns_paginated_messages() {
+        let app = tauri::test::mock_builder()
+            .manage(AppState::default())
+            .build(mock_context(noop_assets()))
+            .expect("Failed to build mock app");
+        let app_handle = app.handle();
+        let username = "chatter";
+        let password = "pass";
+        let result =
+            login::<tauri::test::MockRuntime>(username, password, app.state(), app_handle.clone())
+                .await
+                .unwrap();
+        let data_dir = app.app_handle().path().app_data_dir().unwrap();
+        let mut profile_data = auth::load(username, &data_dir).await.unwrap();
+        let mut messages = Vec::new();
+        for i in 0..10 {
+            messages.push(auth::Message {
+                username: if i % 2 == 0 {
+                    "chatter"
+                } else {
+                    "other-chatter"
+                }
+                .to_string(),
+                text: format!("Message #{}", i),
+                created_at: chrono::Local::now().to_rfc3339(),
+                received_at: chrono::Local::now().to_rfc3339(),
+            });
+        }
+        profile_data.chats.push(auth::Chat {
+            name: "chatter".to_string(),
+            peer_id: "chatter".to_string(),
+            messages,
+        });
+        auth::save(profile_data, &data_dir).await.unwrap();
+
+        let result = get_chat::<tauri::test::MockRuntime>(
+            "chatter".into(),
+            1,
+            2,
+            app.state(),
+            app_handle.clone(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.meta.page, 1);
+        assert_eq!(result.meta.per_page, 2);
+        assert_eq!(result.meta.total, 10);
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[0].body, "Message #9");
+    }
 
     #[tokio::test]
     async fn test_login_returns_user_and_saves_profile_on_first_login() {
