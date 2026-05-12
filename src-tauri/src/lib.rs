@@ -116,9 +116,14 @@ pub async fn process_and_save_incoming_message(
     if let Some(chat) = proifle.chats.iter_mut().find(|c| c.name == msg.sender) {
         chat.messages.push(auth_msg);
     } else {
+        let peer_id = {
+            let pubkey = libp2p::identity::PublicKey::try_decode_protobuf(&msg.sender_public_key)
+                .map_err(|e| format!("Invalid public key: {}", e))?;
+            libp2p::PeerId::from_public_key(&pubkey).to_string()
+        };
         proifle.chats.push(auth::Chat {
             name: msg.sender.clone(),
-            peer_id: msg.sender.clone(),
+            peer_id: peer_id,
             messages: vec![auth_msg],
         });
     }
@@ -193,11 +198,13 @@ async fn connect_to_peer<R: tauri::Runtime>(
     auth::save(profile_data, &data_dir)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(ChatInfo {
+    let chat_info = ChatInfo {
         id: peer_id.clone(),
         login: peer_id.clone(),
         has_unread: false,
-    })
+    };
+    let _ = app_handle.emit("new-chat", &chat_info);
+    Ok(chat_info)
 }
 
 #[tauri::command]
@@ -596,7 +603,10 @@ mod tests {
     use crate::p2p::identity::get_peer_id_from_device_id;
 
     use super::*;
-    use tauri::test::{mock_app, mock_builder, mock_context, noop_assets};
+    use tauri::{
+        test::{mock_app, mock_builder, mock_context, noop_assets},
+        Listener,
+    };
 
     #[tokio::test]
     async fn test_connect_to_peer_creates_new_chat() {
@@ -703,11 +713,12 @@ mod tests {
         let app_handle = app.handle();
         let username = "chatter";
         let password = "pass";
+        let data_dir = app.app_handle().path().app_data_dir().unwrap();
+        cleanup_profile(username, &data_dir);
         let result =
             login::<tauri::test::MockRuntime>(username, password, app.state(), app_handle.clone())
                 .await
                 .unwrap();
-        let data_dir = app.app_handle().path().app_data_dir().unwrap();
         let mut profile_data = auth::load(username, &data_dir).await.unwrap();
         let msg = auth::Message {
             username: "other-chatter-2".to_string(),
@@ -738,11 +749,12 @@ mod tests {
         let app_handle = app.handle();
         let username = "chatter";
         let password = "pass";
+        let data_dir = app.app_handle().path().app_data_dir().unwrap();
+        cleanup_profile(username, &data_dir);
         let result =
             login::<tauri::test::MockRuntime>(username, password, app.state(), app_handle.clone())
                 .await
                 .unwrap();
-        let data_dir = app.app_handle().path().app_data_dir().unwrap();
         let mut profile_data = auth::load(username, &data_dir).await.unwrap();
         let mut messages = Vec::new();
         for i in 0..10 {
@@ -976,5 +988,10 @@ mod tests {
         assert!(handle_lock.is_some());
         let handle = handle_lock.as_ref().unwrap();
         assert_eq!(handle.local_peer_id.to_string(), peer_id_str);
+    }
+
+    fn cleanup_profile(username: &str, data_dir: &Path) {
+        let file_path = data_dir.join(format!("{}.json", username));
+        let _ = std::fs::remove_file(file_path);
     }
 }
