@@ -116,9 +116,14 @@ pub async fn process_and_save_incoming_message(
     if let Some(chat) = proifle.chats.iter_mut().find(|c| c.name == msg.sender) {
         chat.messages.push(auth_msg);
     } else {
+        let peer_id = {
+            let pubkey = libp2p::identity::PublicKey::try_decode_protobuf(&msg.sender_public_key)
+                .map_err(|e| format!("Invalid public key: {}", e))?;
+            libp2p::PeerId::from_public_key(&pubkey).to_string()
+        };
         proifle.chats.push(auth::Chat {
             name: msg.sender.clone(),
-            peer_id: msg.sender.clone(),
+            peer_id: peer_id,
             messages: vec![auth_msg],
         });
     }
@@ -193,11 +198,13 @@ async fn connect_to_peer<R: tauri::Runtime>(
     auth::save(profile_data, &data_dir)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(ChatInfo {
+    let chat_info = ChatInfo {
         id: peer_id.clone(),
         login: peer_id.clone(),
         has_unread: false,
-    })
+    };
+    let _ = app_handle.emit("new-chat", &chat_info);
+    Ok(chat_info)
 }
 
 #[tauri::command]
@@ -596,7 +603,10 @@ mod tests {
     use crate::p2p::identity::get_peer_id_from_device_id;
 
     use super::*;
-    use tauri::test::{mock_app, mock_builder, mock_context, noop_assets};
+    use tauri::{
+        test::{mock_app, mock_builder, mock_context, noop_assets},
+        Listener,
+    };
 
     #[tokio::test]
     async fn test_connect_to_peer_creates_new_chat() {
