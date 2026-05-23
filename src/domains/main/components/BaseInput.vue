@@ -38,7 +38,7 @@
 import { ref } from 'vue';
 
 interface Props {
-  modelValue: string | number;
+  modelValue: string | number | null;
   type?: string;
   placeholder?: string;
   disabled?: boolean;

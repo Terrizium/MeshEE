@@ -7,7 +7,7 @@ const {
         modelValue,
         placeholder = 'Enter password...'
     } = defineProps<{
-        modelValue: number | string;
+        modelValue: number | string | null;
         placeholder?: string
     }>()
     const emit = defineEmits<{

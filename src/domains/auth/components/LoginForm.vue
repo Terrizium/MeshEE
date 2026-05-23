@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import BaseInput from '../../main/components/BaseInput.vue';
-import PasswordInput from './PasswordInput.vue';
 import BaseButton from '../../main/components/BaseButton.vue';
+import BaseUserForm from '../../main/components/BaseUserForm.vue';
 
 const emit = defineEmits<{
     (e: 'submit', {login, password}: {login: string; password: string}): void
 }>()
 
 const {
-    loading = false
-} = defineProps<{loading: boolean}>()
+    loading = false,
+    withBtn = false,
+    btnTitle = 'login'
+} = defineProps<{
+    loading: boolean;
+    withBtn?: boolean;
+    btnTitle?: string;
+}>()
 
 
 const usrLogin = ref('');
@@ -23,9 +28,10 @@ const pswd = ref('');
             <span>Войдите в приложение</span>
         </div>
         <div class="d-flex flex-column jc ac gap-2">
-            <BaseInput v-model="usrLogin" placeholder="login" />
-            <PasswordInput v-model="pswd" placeholder="password" />
-            <BaseButton :loading="loading" :disabled="!usrLogin || !pswd" @click.stop="emit('submit', {login: usrLogin, password: pswd})">login</BaseButton>
+            <BaseUserForm v-model:login="usrLogin" v-model:password="pswd" />
+            <BaseInput v-model="usrLogin" />
+            <PasswordInput v-model="pswd" />
+            <BaseButton v-if="withBtn" :loading="loading" :disabled="!usrLogin || !pswd" @click.stop="emit('submit', {login: usrLogin, password: pswd})">{{ btnTitle }}</BaseButton>
         </div>
     </div>
 </template>

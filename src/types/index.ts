@@ -31,5 +31,6 @@ export type Api = {
     login: (login: string, password: string) => Promise<User>;
     getChats: () => Promise<Chat[]>;
     getChat: (id: number, meta: PaginateRequest) => Promise<{messages: Message[]; meta: PaginateResponse}>
-    sendMessage: (id: number, msg: string) => Promise<Message>
+    sendMessage: (id: number, msg: string) => Promise<Message>;
+    getInvite: () => Promise<string>;
 }

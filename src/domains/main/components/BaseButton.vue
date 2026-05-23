@@ -116,7 +116,7 @@ const spinnerSize = computed(() => {
 }
 
 .base-button--variant-secondary:hover:not(:disabled) {
-  box-shadow: 0 0 0 6px rgba(45, 212, 191, 0.4), 0 0 20px rgba(45, 212, 191, 0.3);
+  box-shadow: 0 0 0 6px rgba(110, 128, 207, 0.4), 0 0 20px rgba(84, 151, 182, 0.3);
 }
 
 /* ---------------------- Вариант outlined (анимированная градиентная рамка) ---------------------- */

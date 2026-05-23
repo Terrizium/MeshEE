@@ -39,6 +39,7 @@ const mockApi: Api = {
             has_unread: false,
         },
     ]),
+    getInvite: async(): Promise<{link: string}> => ({link: 'Here is your invite link'}),
     getChat: async (): Promise<{meta: Paginate; messages: Message[]}> => ({
         meta: {
         page: counter++,
