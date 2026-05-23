@@ -51,6 +51,8 @@ pub struct ProfileData {
     pub username: String,
     pub peer_id: String,
     #[serde(default)]
+    pub device_id: String,
+    #[serde(default)]
     pub chats: Vec<Chat>,
     #[serde(default)]
     known_peers: HashMap<String, Vec<String>>,
@@ -60,6 +62,7 @@ impl ProfileData {
         ProfileData {
             username: String::new(),
             peer_id: String::new(),
+            device_id: String::new(),
             chats: Vec::new(),
             known_peers: HashMap::new(),
         }
@@ -83,6 +86,8 @@ impl ProfileData {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Chat {
     pub name: String,
+    #[serde(default)]
+    pub peer_id: String,
     pub messages: Vec<Message>,
 }
 
@@ -90,6 +95,7 @@ impl Chat {
     fn default() -> Self {
         Self {
             name: String::new(),
+            peer_id: String::new(),
             messages: Vec::new(),
         }
     }

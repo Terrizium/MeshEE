@@ -1,8 +1,18 @@
+use libp2p::PeerId;
+
 // pub mod chat;
+pub use crate::p2p::message::ChatMessage;
 pub mod error;
 pub mod identity;
 pub mod message;
 pub mod swarm;
+
+pub enum P2pCommand {
+    SendMessage {
+        peer_id: PeerId,
+        message: ChatMessage,
+    },
+}
 
 #[cfg(test)]
 mod tests {
@@ -25,11 +35,37 @@ mod tests {
         tcp, yamux, PeerId, Swarm, Transport,
     };
 
+    #[test]
+    fn test_signature_verification_passes_on_valid() {
+       let device_id = "0000000000000000000000000000000000000000000000000000000000000001";
+       let kp = get_peer_id_from_device_id(device_id).unwrap();
+       let msg = ChatMessage::new(
+           "test".into(),
+           "Test Signed!".into(),
+       );
+       let signed = msg.sign(&kp);
+       assert!(signed.verify_signature().is_ok());
+       assert_eq!(signed.content, "Test Signed!");
+    }
+    #[test]
+    fn test_signature_verification_fails_on_tampered() {
+       let device_id = "0000000000000000000000000000000000000000000000000000000000000001";
+       let kp = get_peer_id_from_device_id(device_id).unwrap();
+       let mut msg = ChatMessage::new(
+           "test".into(),
+           "Original".into(),
+       );
+       let signed = msg.sign(&kp);
+       let mut tampered = signed.clone();
+       tampered.content = "Hacked!".into();
+       assert!(tampered.verify_signature().is_err());
+    }
+
     #[tokio::test]
     async fn test_connection_via_relay_fallback() {
         use std::time::Duration;
         use libp2p::swarm::SwarmEvent;
-        use crate::p2p::swarm::{create_relay_server, create_swarm_with_relay};
+        use crate::p2p::swarm::{create_relay_server, create_swarm_with_relay, RelayChatBehaviourEvent};
 
         let relay_kp = Keypair::generate_ed25519();
         let mut relay_swarm = create_relay_server(relay_kp).await.unwrap();
@@ -43,42 +79,43 @@ mod tests {
         };
         let relay_peer_id = *relay_swarm.local_peer_id();
 
-        let client_kp = Keypair::generate_ed25519();
-        let mut client_swarm = create_swarm_with_relay(client_kp).await.unwrap();
+        let client1_kp = Keypair::generate_ed25519();
+        let client2_kp = Keypair::generate_ed25519();
+        let mut client1 = create_swarm_with_relay(client1_kp).await.unwrap();
+        let mut client2 = create_swarm_with_relay(client2_kp).await.unwrap();
 
-        let target = relay_addr.with(Protocol::P2p(relay_peer_id.into()));
-        client_swarm.dial(target).unwrap();
+        let client1_id = *client1.local_peer_id();
+        let client2_id = *client2.local_peer_id();
 
-        // tokio::time::timeout(Duration::from_secs(10), async {
-        //     let mut connected = false;
-        //     let mut reserved = false;
-        //
-        //     loop {
-        //         tokio::select! {
-        //             event = relay_swarm.select_next_some() => {
-        //             },
-        //             event = client_swarm.select_next_some() => {
-        //                 match event {
-        //                     SwarmEvent::ConnectionEstablished { peer_id, .. } 
-        //                         if peer_id == relay_peer_id => {
-        //                         connected = true;
-        //                         let relay_reserve_addr = relay_addr.with(Protocol::P2p(relay_peer_id))
-        //                             .with(Protocol::P2pCircuit);
-        //                     }
-        //                     SwarmEvent::Behaviour(RelayChatBehaviourEvent::RelayClient(
-        //                         relay::client::Event::ReservationReqAccepted { .. } 
-        //                     )) | SwarmEvent::Behaviour(RelayChatBehaviourEvent::RelayClient(
-        //                         relay::client::Event::ReservationConfirmed { .. }
-        //                     )) => {
-        //                         reserved = true;
-        //                     }
-        //                     _ => {}
-        //                 }
-        //             }
-        //         }
-        //         if connected && reserved { break; }
-        //     }
-        // }).await.expect("Timeout: relay reservation failed");
+        let relay_multiaddr = relay_addr.with(Protocol::P2p(relay_peer_id.into()));
+        client1.dial(relay_multiaddr.clone()).unwrap();
+        client2.dial(relay_multiaddr).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let mut client1_connected = false;
+            let mut client2_connected = false;
+
+            loop {
+                tokio::select! {
+                    event = client1.select_next_some() => {
+                        if let SwarmEvent::ConnectionEstablished { peer_id, .. } = event {
+                            if peer_id == relay_peer_id {
+                                client1_connected = true;
+                            }
+                        }
+                    }
+                    event = client2.select_next_some() => {
+                        if let SwarmEvent::ConnectionEstablished { peer_id, .. } = event {
+                            if peer_id == relay_peer_id {
+                                client2_connected = true;
+                            }
+                        }
+                    }
+                    _ = relay_swarm.select_next_some() => {}
+                }
+                if client1_connected && client2_connected { break; }
+            }
+        }).await.expect("Timeout: relay reservation failed");
 
     }
 
@@ -90,10 +127,10 @@ mod tests {
        let kp1 = get_peer_id_from_device_id(id1).unwrap();
        let kp2 = get_peer_id_from_device_id(id2).unwrap();
 
-       let (mut swarm1, _, mut rx1) = create_swarm_with_rx(kp1).await.unwrap();
-       let (mut swarm2, tx2, mut rx2) = create_swarm_with_rx(kp2).await.unwrap();
+       let (mut swarm1,_, _, _, mut rx1) = create_swarm_with_rx(kp1).await.unwrap();
+       let (mut swarm2, _, _, tx2, mut rx2) = create_swarm_with_rx(kp2).await.unwrap();
        connect_swarms(&mut swarm1, &mut swarm2).await;
-       let msg = ChatMessage { sender: "peer1".into(), content: "Hello P2P!".into() };
+       let msg = ChatMessage::new("peer1".into(),"Hello P2P!".into());
        let peer2 = *swarm2.local_peer_id();
        swarm1.behaviour_mut().messages.send_request(&peer2, msg.clone());
 
@@ -203,7 +240,7 @@ mod tests {
         }).await.unwrap();
 
         // Отправляем сообщение
-        let msg = ChatMessage { sender: "peer1".into(), content: "Hello P2P!".into() };
+        let msg = ChatMessage::new( "peer1".into(), "Hello P2P!".into() );
         let _request_id = swarm1.behaviour_mut().messages.send_request(&peer2, msg.clone());
 
         // Ожидаем получение и отвечаем

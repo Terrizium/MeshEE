@@ -3,18 +3,72 @@
 use async_trait::async_trait;
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use libp2p::{
+    identity::{Keypair, PublicKey},
     multihash::derive,
     request_response::{self, ProtocolName},
 };
 use serde::{Deserialize, Serialize};
-use std::io; // 👈 futures::io
+use std::{
+    io,
+    time::{SystemTime, UNIX_EPOCH},
+}; // 👈 futures::io
 
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+use crate::p2p::error::ChatError;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ChatMessage {
+    pub id: String,
     pub sender: String,
     pub content: String,
+    #[serde(default)]
+    pub sender_public_key: Vec<u8>,
+    pub timestamp: u64,
+    #[serde(default)]
+    pub signature: Vec<u8>,
+}
+
+impl ChatMessage {
+    pub fn new(sender: String, content: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            sender,
+            sender_public_key: Vec::new(),
+            content,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            signature: Vec::new(),
+        }
+    }
+    pub fn sign(mut self, kp: &Keypair) -> Self {
+        self.sender_public_key = kp.public().encode_protobuf();
+        let mut msg_to_sign = self.clone();
+        msg_to_sign.signature = Vec::new();
+
+        let data = serde_json::to_vec(&msg_to_sign).expect("Message should serialize");
+        self.signature = kp.sign(&data).expect("Keypair should sign data");
+        self
+    }
+
+    pub fn verify_signature(&self) -> Result<(), ChatError> {
+        if self.signature.is_empty() {
+            return Err(ChatError::NoSignatureError);
+        }
+        let mut msg_to_verify = self.clone();
+        msg_to_verify.signature = Vec::new();
+
+        let data = serde_json::to_vec(&msg_to_verify).map_err(|e| ChatError::SerializeError)?;
+        let pubkey = PublicKey::try_decode_protobuf(&self.sender_public_key)
+            .map_err(|e| ChatError::PublicKeyError)?;
+        let res = pubkey.verify(&data, &self.signature);
+        if !res {
+            return Err(ChatError::VerificationFailedError);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
