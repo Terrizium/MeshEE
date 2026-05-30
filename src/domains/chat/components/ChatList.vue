@@ -14,7 +14,7 @@
 </template>
 <script setup lang="ts">
 import { onMounted, Ref, ref } from 'vue';
-import { useApi } from '../../../composables/useApi';
+import { tauri } from '../../../api/tauri';
 import { Chat } from '../../../types';
 import { useError } from '../../../composables/useError';
 import BaseVirtualScroll from '../../main/components/BaseVirtualScroll.vue';
@@ -28,10 +28,13 @@ import BaseBadge from '../../main/components/BaseBadge.vue';
     const chats: Ref<Chat[]> = ref([])
 
 
-    onMounted(() => {
-        useApi()
-        .getChats()
-        .then((res) => chats.value = res)
-        .catch((e) => useError(e))
+    onMounted(async () => {
+        try {
+            const { execute } = tauri.getChats();
+            const res = await execute();
+            if (res) chats.value = res;
+        } catch (e) {
+            useError(e);
+        }
     })
 </script>

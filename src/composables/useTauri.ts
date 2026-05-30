@@ -5,12 +5,6 @@ import { listen, type UnlistenFn, type Event } from '@tauri-apps/api/event';
 // ----------------------------------------------------------------------
 // Хук для вызова команд (invoke) с состоянием
 // ----------------------------------------------------------------------
-interface UseCommandOptions {
-  immediate?: boolean;    // вызвать команду сразу
-  onSuccess?: (data: any) => void;
-  onError?: (err: any) => void;
-}
-
 export interface UseCommandReturn<T, P> {
   data: Ref<T | null>;
   error: Ref<any | null>;
@@ -20,7 +14,7 @@ export interface UseCommandReturn<T, P> {
 
 export function useTauriCommand<T = any, P = any>(
   command: string,
-  options: UseCommandOptions = {}
+  initialPayload?: P
 ): UseCommandReturn<T, P> {
   const data = ref<T | null>(null) as Ref<T | null>;
   const error = ref<any | null>(null);
@@ -30,21 +24,19 @@ export function useTauriCommand<T = any, P = any>(
     pending.value = true;
     error.value = null;
     try {
-      const result = await invoke<T>(command, payload);
+      const result = await invoke<T>(command, payload as any);
       data.value = result;
-      options?.onSuccess?.(result);
       return result;
     } catch (err) {
       error.value = err;
-      options?.onError?.(err);
       return null;
     } finally {
       pending.value = false;
     }
   };
 
-  if (options?.immediate) {
-    execute();
+  if (initialPayload !== undefined) {
+    execute(initialPayload);
   }
 
   return { data, error, pending, execute };

@@ -10,7 +10,7 @@
       <template v-for="msg in messages" :key="msg.id">
         <MessageBubble
           :message="msg"
-          :is-own="msg.user_id === currentUserId"
+          :is-own="msg.user_id === 0"
           :sender-login="getSenderLogin(msg.user_id)"
         />
       </template>
@@ -26,26 +26,57 @@
         ↓
       </button>
     </Transition>
+
+    <!-- Поле ввода сообщения -->
+    <div class="chat-input">
+      <BaseInput
+        v-model="newMessage"
+        placeholder="Введите сообщение..."
+        @keyup.enter="sendMessage"
+      />
+      <BaseButton
+        @click="sendMessage"
+        :loading="sending"
+        :disabled="!newMessage.trim()"
+        class="send-btn"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M22 2L11 13"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M22 2L15 22L11 13L2 9L22 2Z"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </BaseButton>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import MessageBubble from './MessageBuble.vue';
-import { useApi } from '../../../composables/useApi';
-import type { Message } from '../../../types';
+import { tauri } from '../../../api/tauri';
+import type { Message, Chat } from '../../../types';
 import { useIntersectionObserver } from '../../../composables/useIntersectionObserver';
 import BaseSpinner from './BaseSpinner.vue';
+import BaseInput from './BaseInput.vue';
+import BaseButton from './BaseButton.vue';
+import { listen } from '@tauri-apps/api/event';
 
 const props = defineProps<{
-  chatId: number;
-  currentUserId: number;
+  chatId: string;
+  currentUserId: string;
   otherUserLogin?: string;
 }>();
-
-const { getChat: fetchChat } = useApi();
-
-
 
 const PAGE_SIZE = 20;
 
@@ -58,8 +89,10 @@ const messages = ref<Message[]>([]);
 const loadingPrev = ref(false);
 const hasMore = ref(true);
 const page = ref(1);
-const isAtBottom = ref(true);          // находится ли пользователь внизу
+const isAtBottom = ref(true);
 const showScrollDownButton = ref(false);
+const newMessage = ref('');
+const sending = ref(false);
 
 // Отслеживаем появление спиннера в зоне видимости (для подгрузки старых)
 useIntersectionObserver(loader, loadPrevMessages, ref(true));
@@ -67,14 +100,14 @@ useIntersectionObserver(loader, loadPrevMessages, ref(true));
 // Загрузка начальных сообщений (последние страницы – сервер отдаёт от старых к новым)
 const loadInitialMessages = async () => {
   page.value = 1;
-  const result = await getChat(props.chatId, {
+  const { data, execute } = tauri.getChat(props.chatId, {
     page: page.value,
     per_page: PAGE_SIZE,
   });
-  if (result?.messages) {
-    messages.value = result.messages; // старые → новые
-    hasMore.value = messages.value.length < result.meta.total;
-    // После загрузки скроллим вниз
+  await execute();
+  if (data.value?.messages) {
+    messages.value = data.value.messages;
+    hasMore.value = messages.value.length < data.value.meta.total;
     await nextTick();
     scrollToBottom();
   }
@@ -86,27 +119,23 @@ async function loadPrevMessages() {
 
   loadingPrev.value = true;
   const nextPage = page.value + 1;
-  const result = await getChat(props.chatId, {
+  const { data, execute } = tauri.getChat(props.chatId, {
     page: nextPage,
     per_page: PAGE_SIZE,
   });
+  await execute();
 
-  if (result?.messages?.length) {
-    // Сохраняем высоту скролла до добавления
+  if (data.value?.messages?.length) {
     const oldScrollHeight = scroller.value?.scrollHeight || 0;
     const oldScrollTop = scroller.value?.scrollTop || 0;
 
-    // Добавляем старые сообщения в начало
-    messages.value = [...result.messages, ...messages.value];
+    messages.value = [...data.value.messages, ...messages.value];
     page.value = nextPage;
     
-    hasMore.value = messages.value.length < result.meta.total;
+    hasMore.value = messages.value.length < data.value.meta.total;
     await nextTick();
-    // Корректируем скролл, чтобы видимая область не изменилась
     if (scroller.value) {
       const newScrollHeight = scroller.value.scrollHeight;
-      console.log(scroller.value.scrollTop, newScrollHeight, isAtBottom.value, oldScrollHeight);
-      
       scroller.value.scrollTop = isAtBottom.value ? newScrollHeight : newScrollHeight - oldScrollHeight + oldScrollTop;
     }
   }
@@ -114,16 +143,34 @@ async function loadPrevMessages() {
   loadingPrev.value = false;
 }
 
-// Обработчик скролла – проверяем, находится ли пользователь внизу
+// Отправка сообщения
+async function sendMessage() {
+  const text = newMessage.value.trim();
+  if (!text) return;
+
+  sending.value = true;
+  try {
+    const { data, execute } = tauri.sendMessage(props.chatId, text);
+    await execute({ chat_id: props.chatId, text });
+    if (data.value) {
+      // Добавляем собственное сообщение сразу
+      addNewMessage(data.value);
+      newMessage.value = '';
+    }
+  } catch (e) {
+    console.error('Failed to send message:', e);
+  } finally {
+    sending.value = false;
+  }
+}
+
+// Обработчик скролла
 const onScroll = () => {
-  console.log('scroll', isAtBottom.value);
-  
   if (!scroller.value) return;
   const { scrollTop, scrollHeight, clientHeight } = scroller.value;
   const bottom = scrollHeight - scrollTop - clientHeight;
-  isAtBottom.value = bottom <= 20; // допуск 20px
+  isAtBottom.value = bottom <= 20;
 
-  // Показываем кнопку "вниз", если не внизу и есть сообщения
   showScrollDownButton.value = messages.value.length > 0 && !isAtBottom.value;
 };
 
@@ -137,14 +184,12 @@ const scrollToBottom = () => {
   showScrollDownButton.value = false;
 };
 
-// Добавление нового сообщения (вызывается извне при получении через сокет)
-const addNewMessage = (newMessage: Message) => {
-  messages.value.push(newMessage);
-  // Если пользователь был внизу – автоматически прокручиваем к новому сообщению
+// Добавление нового сообщения
+const addNewMessage = (newMsg: Message) => {
+  messages.value.push(newMsg);
   if (isAtBottom.value) {
     nextTick(() => scrollToBottom());
   } else {
-    // Иначе просто показываем кнопку "вниз" (уже обработается в onScroll)
     showScrollDownButton.value = true;
   }
 };
@@ -162,17 +207,11 @@ watch(
 );
 
 // Функция получения логина отправителя
+// user_id === 0 - собственное сообщение, user_id === 1 - сообщение собеседника
 const getSenderLogin = (userId: number) => {
-  if (userId === props.currentUserId) return '';
+  if (userId === 0) return '';
   return props.otherUserLogin || 'Собеседник';
 };
-
-// Мок для имитации получения сообщений (будет заменён на реальный сокет)
-// Пример регистрации в родительском компоненте:
-// onMounted(() => {
-//   const unlisten = startListening((msg) => chatMessagesRef.value?.addNewMessage(msg));
-//   onUnmounted(unlisten);
-// });
 
 // Экспонируем метод для добавления сообщений извне
 defineExpose({
@@ -188,7 +227,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   overflow: hidden;
-   padding-bottom: 12px;
+  padding-bottom: 12px;
 }
 
 .chat-messages {
@@ -237,6 +276,33 @@ defineExpose({
 .scroll-down-btn:hover {
   background-color: var(--color-primary-hover, #8b5cf6);
   transform: scale(1.05);
+}
+
+.chat-input {
+  display: flex;
+  gap: 0.5rem;
+  padding: 12px 16px;
+  background-color: var(--color-bg, #121217);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.chat-input :deep(.gradient-input-wrapper) {
+  flex: 1;
+}
+
+.send-btn {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.send-btn svg {
+  width: 20px;
+  height: 20px;
 }
 
 /* анимация появления/исчезновения кнопки */

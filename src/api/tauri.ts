@@ -1,104 +1,22 @@
-import { ref } from "vue";
-import { useTauriCommand } from "../composables/useTauri";
-import { Api, Chat, Message, PaginateRequest, PaginateResponse } from "../types";
-import { User } from "../types";
+import { invoke } from '@tauri-apps/api/core';
+import { Api, Chat, Message, PaginateRequest, PaginateResponse, User } from '../types';
+import { useTauriCommand } from '../composables/useTauri';
+
+export type ProfileData = {
+    username: string;
+    peer_id: string;
+    device_id: string;
+    chats: Chat[];
+};
 
 export const tauri: Api = {
-    login: async () => getApi().login(),
-    getUser: async () => getApi().getUser(),
-    getChats: async () => getApi().getChats(),
-    getChat: async (id: number, meta: PaginateRequest) => getApi().getChat(id, meta),
-    sendMessage: async (id: number, text: string) => getApi().sendMessage(id, text)
-    //func connect_to_peer(peerId: string): Promise<Chat> 
-    //func get_my_peer_id: string
-    //emit new-message
-    //emit new-chat
-    ,
-    getInvite: async () => getApi().getInvite()
-}
-
-function getApi(): Api {
-  return {...mockApi, ...chatApi};
-}
-
-const chatApi: Api = {
-    login: async () => useTauriCommand('login', null),
-    getChats: async() => useTauriCommand('get_chats', null),
-    getChat: async() => useTauriCommand('get_chat')
-}
-
-const mockApi: Api = {
-    login: () => ({
-        data: ref<User>({
-            id: 1,
-            login: 'Stiven'
-        }),
-        error: ref(null),
-        pending: ref(false),
-        execute: async ({login, password}) => this?.data || null
-}),
-    getUser: async (): Promise<User> => ({
-            id: 1,
-            login: 'Stiven'
-    }),
-    getChats: async () => ({
-        data: ref([
-        {
-            id: 1,
-            login: 'StaticRange',
-            has_unread: true,
-        },
-        {
-            id: 2,
-            login: 'StaticRange',
-            has_unread: true,
-        },
-        {
-            id: 3,
-            login: 'StaticRange',
-            has_unread: false,
-        },
-    ]),
-      error: ref(null),
-      pending: ref(false),
-      execute: () => this?.data || null        
-    }),
-    getInvite: async(): Promise<{link: string}> => new Promise.resolve({link: 'Here is your invite link'}),
-    getChat: async (): Promise<{meta: PaginateResponse; messages: Message[]}> => ({
-        meta: {
-        page: counter++,
-        per_page: 20,
-        total: 25
-    },messages: [
-        {
-            id: 1,
-            body: 'Hi there',
-            is_read: false,
-            date: '07:02:2023 20:30',
-            user_id: 2
-        },
-        {
-            id: 2,
-            body: 'STRrrrrrr',
-            is_read: false,
-            date: '07:02:2023 20:30',
-            user_id: 2
-        },
-        {
-            id: 3,
-            body: 'Hey hey hey you are',
-            is_read: false,
-            date: '07:02:2023 20:30',
-            user_id: 2
-        },
-    ]}),
-    sendMessage: async () => ({
-            id: 4,
-            body: '-|-_-|-/',
-            is_read: false,
-            date: '07:02:2023 20:30',
-            user_id: 2
-        })
-}
-
-let counter = 1;
+    login: (name: string, password: string) => useTauriCommand<User, { name: string; password: string }>('login', { name, password }),
+    getUser: async () => invoke<User>('get_user'),
+    getChats: () => useTauriCommand<Chat[], void>('get_chats'),
+    getChat: (id: string, meta: PaginateRequest) => useTauriCommand<{ messages: Message[]; meta: PaginateResponse }, { chat_id: string; page: number; per_page: number }>('get_chat', { chat_id: id, page: meta.page, per_page: meta.per_page }),
+    sendMessage: (id: string, text: string) => useTauriCommand<Message, { chat_id: string; text: string }>('send_message', { chat_id: id, text }),
+    connectToPeer: (peerId: string) => useTauriCommand<Chat, { peer_id: string }>('connect_to_peer', { peer_id: peerId }),
+    getMyPeerId: async () => invoke<string>('get_local_peer_id'),
+    initP2p: async (deviceId: string) => invoke<string>('init_p2p', { device_id: deviceId }),
+    loadProfile: async () => invoke<ProfileData>('load'),
+};
