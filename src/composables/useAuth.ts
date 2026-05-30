@@ -10,13 +10,19 @@ export const useAuth = () => {
 
     async function login(login: string, password: string) {
         const { login: loginApi } = useApi();
-        return loginApi(login, password)
-        .then((res) => user.value = res)
-        .catch((e) => useError(e))
+        try {
+            const {data, error, execute} = await loginApi()
+            await execute({name: login, password});
+            user.value = data.value;
+        } catch (e) {
+            useError(e)
+        }
+
+        
     }
 
     async function logout() {
-        return Promise.resolve()
+        user.value = null;
     }
     return {
         user,

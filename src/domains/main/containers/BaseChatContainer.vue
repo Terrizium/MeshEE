@@ -52,6 +52,7 @@ import BaseAppBar from '../components/BaseAppBar.vue';
 import BaseButton from '../components/BaseButton.vue';
 import ChatRoom from '../components/ChatRoom.vue';
 import { useAuth } from '../../../composables/useAuth';
+import { useError } from '../../../composables/useError';
 
 
 const {
@@ -75,11 +76,19 @@ const chatsList: Ref<Chat[] | []> = ref([]);
         mobileView.value = 'room';
     }
 
-    onMounted(() => {
-      getChats()
-      .then(res => {
-        chatsList.value = res;
-      });
+    onMounted(async() => {
+      try {
+        const {
+        data,
+        error,
+        pending,
+        execute
+      } = await getChats()
+      chatsList.value = await execute() ?? [];
+      } catch (e) {
+        useError(e)
+      }
+      
     })
 
 </script>

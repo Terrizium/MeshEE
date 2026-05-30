@@ -1,33 +1,48 @@
-import { Api, Chat, Message, Paginate } from "../types";
+import { ref } from "vue";
+import { useTauriCommand } from "../composables/useTauri";
+import { Api, Chat, Message, PaginateRequest, PaginateResponse } from "../types";
 import { User } from "../types";
 
 export const tauri: Api = {
-    login: async (login, password) => getApi().login(login, password),
+    login: async () => getApi().login(),
     getUser: async () => getApi().getUser(),
     getChats: async () => getApi().getChats(),
-    getChat: async (id, meta) => getApi().getChat(id, meta),
-    sendMessage: async (id, msg) => getApi().sendMessage(id, msg)
-
+    getChat: async (id: number, meta: PaginateRequest) => getApi().getChat(id, meta),
+    sendMessage: async (id: number, text: string) => getApi().sendMessage(id, text)
     //func connect_to_peer(peerId: string): Promise<Chat> 
     //func get_my_peer_id: string
     //emit new-message
     //emit new-chat
+    ,
+    getInvite: async () => getApi().getInvite()
 }
 
 function getApi(): Api {
-  return mockApi;
+  return {...mockApi, ...chatApi};
+}
+
+const chatApi: Api = {
+    login: async () => useTauriCommand('login', null),
+    getChats: async() => useTauriCommand('get_chats', null),
+    getChat: async() => useTauriCommand('get_chat')
 }
 
 const mockApi: Api = {
-    login: async (): Promise<User> => ({
+    login: () => ({
+        data: ref<User>({
             id: 1,
             login: 'Stiven'
-    }),
+        }),
+        error: ref(null),
+        pending: ref(false),
+        execute: async ({login, password}) => this?.data || null
+}),
     getUser: async (): Promise<User> => ({
             id: 1,
             login: 'Stiven'
     }),
-    getChats: async (): Promise<Chat[]> => ([
+    getChats: async () => ({
+        data: ref([
         {
             id: 1,
             login: 'StaticRange',
@@ -44,8 +59,12 @@ const mockApi: Api = {
             has_unread: false,
         },
     ]),
-    getInvite: async(): Promise<{link: string}> => ({link: 'Here is your invite link'}),
-    getChat: async (): Promise<{meta: Paginate; messages: Message[]}> => ({
+      error: ref(null),
+      pending: ref(false),
+      execute: () => this?.data || null        
+    }),
+    getInvite: async(): Promise<{link: string}> => new Promise.resolve({link: 'Here is your invite link'}),
+    getChat: async (): Promise<{meta: PaginateResponse; messages: Message[]}> => ({
         meta: {
         page: counter++,
         per_page: 20,

@@ -43,7 +43,10 @@ const props = defineProps<{
   otherUserLogin?: string;
 }>();
 
-const { getChat } = useApi();
+const { getChat: fetchChat } = useApi();
+
+
+
 const PAGE_SIZE = 20;
 
 // DOM элементы

@@ -1,3 +1,5 @@
+import { UseCommandReturn } from "../composables/useTauri";
+
 export type Message = {
     id: number;
     body: string;
@@ -28,9 +30,9 @@ export type Chat = {
 
 export type Api = {
     getUser: () => Promise<User>;
-    login: (login: string, password: string) => Promise<User>;
-    getChats: () => Promise<Chat[]>;
-    getChat: (id: number, meta: PaginateRequest) => Promise<{messages: Message[]; meta: PaginateResponse}>
-    sendMessage: (id: number, msg: string) => Promise<Message>;
-    getInvite: () => Promise<string>;
+    login: () => UseCommandReturn<'login', null>;
+    getChats: () => UseCommandReturn<'get_chats',Chat[]>;
+    getChat: (id: number, meta: PaginateRequest) => UseCommandReturn<'get_chat',{messages: Message[]; meta: PaginateResponse}>
+    sendMessage: (id: number, text: string) => UseCommandReturn<'send_message',Message>;
+    getInvite: () => UseCommandReturn<'get_local_peer_id',string>;
 }

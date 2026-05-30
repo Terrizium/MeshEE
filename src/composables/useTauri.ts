@@ -11,7 +11,7 @@ interface UseCommandOptions {
   onError?: (err: any) => void;
 }
 
-interface UseCommandReturn<T, P> {
+export interface UseCommandReturn<T, P> {
   data: Ref<T | null>;
   error: Ref<any | null>;
   pending: Ref<boolean>;
@@ -32,18 +32,18 @@ export function useTauriCommand<T = any, P = any>(
     try {
       const result = await invoke<T>(command, payload);
       data.value = result;
-      options.onSuccess?.(result);
+      options?.onSuccess?.(result);
       return result;
     } catch (err) {
       error.value = err;
-      options.onError?.(err);
+      options?.onError?.(err);
       return null;
     } finally {
       pending.value = false;
     }
   };
 
-  if (options.immediate) {
+  if (options?.immediate) {
     execute();
   }
 
